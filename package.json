@@ -1,0 +1,95 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "slack-hub",
+  "title": "Slack Hub",
+  "description": "Search Slack conversations, people, and messages, review messages addressed to you, and post or reply in threads; requires a modified slack-cli and your own Slack user token.",
+  "icon": "slack-icon-rounded.png",
+  "author": "shinonomelon",
+  "license": "MIT",
+  "categories": [
+    "Communication"
+  ],
+  "preferences": [
+    {
+      "name": "slackCliPath",
+      "title": "slack-cli Path",
+      "description": "改造版 slack-cli の dist/index.js、または slack-cli のコマンドのパス（~ 可）。空なら ~/.volta/bin・/opt/homebrew/bin・/usr/local/bin の順に slack-cli を探します",
+      "type": "textfield",
+      "required": false,
+      "placeholder": "~/slack-cli/dist/index.js"
+    },
+    {
+      "name": "nodePath",
+      "title": "Node Path",
+      "description": "slack-cli Path が .js のときに使う node のパス（~ 可）。空なら同じ順に node を探します",
+      "type": "textfield",
+      "required": false,
+      "placeholder": "~/.volta/bin/node"
+    },
+    {
+      "name": "slackCliProfile",
+      "title": "slack-cli Profile",
+      "description": "slack-cli config set --profile で付けた名前。空なら --profile を付けません",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "previousHandles",
+      "title": "Previous Handles",
+      "description": "Slack のハンドルを変えたことがある人だけ。前のハンドルをカンマ区切りで",
+      "type": "textfield",
+      "required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "slack-hub",
+      "title": "Slack Hub",
+      "description": "Search Slack channels, people, and group DMs, open them in Slack, and write to them.",
+      "mode": "view",
+      "keywords": [
+        "open channel",
+        "quick compose",
+        "search messages"
+      ]
+    },
+    {
+      "name": "refresh-directory",
+      "title": "Refresh Slack Directory",
+      "description": "Refresh the cached Slack channels, people, and joined channels every 5 minutes when they are stale.",
+      "mode": "no-view",
+      "interval": "5m"
+    },
+    {
+      "name": "slack-drafts",
+      "title": "Slack Drafts",
+      "description": "Review the drafts you saved from Slack Hub, open them in Slack, and delete the records.",
+      "mode": "view",
+      "keywords": [
+        "draft"
+      ]
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^2.4.0",
+    "@raycast/utils": "^2.3.2"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^2.2.0",
+    "@types/node": "22.19.17",
+    "@types/react": "19.0.10",
+    "eslint": "^10.10.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop",
+    "lint": "ray lint",
+    "fix-lint": "ray lint --fix",
+    "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/*.test.ts"
+  },
+  "engines": {
+    "node": ">=22.22.2"
+  }
+}
