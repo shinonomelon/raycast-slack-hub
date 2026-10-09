@@ -47,7 +47,7 @@ Raycastの設定→ **Extensions → Slack Hub → Slack Access Token**にトー
 
 ## よく使う操作
 
-Raycastで`Slack Hub`を開き、画面下部のActionsから操作を選びます。キーは画面に表示されたものを使ってください。
+Raycastで`Slack Hub`を開き、画面下部のActionsから操作を選びます。一覧ではReturnでSlackを開き、⌘Returnで詳細を表示・非表示にします。会話や人へのWriteは⌘Nです。以前の版とはメッセージのReturnと⌘Returnが入れ替わっています。
 
 | やりたいこと            | 操作                                                                     |
 | ----------------------- | ------------------------------------------------------------------------ |

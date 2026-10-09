@@ -11,6 +11,8 @@ Slackアプリに許可する操作をスコープと呼びます。使うAPIご
 | 自分とワークスペースの確認               | `auth.test`           | 追加スコープ不要                                                           |
 | 公開・非公開チャンネル、グループDMの一覧 | `conversations.list`  | `channels:read`・`groups:read`・`mpim:read`                                |
 | 参加中の公開チャンネル                   | `users.conversations` | `channels:read`                                                            |
+| 人の参加チャンネル・全員の共通チャンネル | `users.conversations` | `channels:read`・`groups:read` |
+| チャンネルの参加者 | `conversations.members` | `channels:read`・`groups:read` |
 | 人の一覧                                 | `users.list`          | `users:read`                                                               |
 | メッセージ検索、自分宛て                 | `search.messages`     | `search:read`                                                              |
 | 既読位置                                 | `conversations.info`  | `channels:read`・`groups:read`・`im:read`・`mpim:read`（会話の種類による） |
@@ -73,3 +75,11 @@ npm run build
 ```
 
 API通信は架空のデータとHTTPモックで検証します。ページ送り、認証、429、検索の中断、既読位置、DMの開始、投稿の成功・失敗・未確認を扱います。テストは実際のSlackに投稿しません。GitHub ActionsはUTC・Asia/Tokyo・America/New_Yorkでテストします。
+
+## 参加関係の取得
+
+参加チャンネルと参加者は全ページを取得してから表示します。複数人の場合は全員の参加チャンネルIDの共通部分を使います。ページ途中の失敗は完全な結果として保存しません。操作全体の上限は30秒で、失敗時の自動再試行はしません。
+
+新しい参加関係はメモリだけに保持し、ディスクへ保存しません。キャッシュの有効期間は2分、最大20エントリかつ合計10,000IDです。アカウントとAPIクライアントごとに隔離します。上限を超える単独の結果も表示できますが、キャッシュには残しません。
+
+公開チャンネルと、自分も参加している非公開チャンネルを取得対象とします。権限・ゲスト・Slack Connect等によりAPIで見える範囲が異なる場合があります。表示した取得時刻以後の参加・退出はRefreshで確認してください。

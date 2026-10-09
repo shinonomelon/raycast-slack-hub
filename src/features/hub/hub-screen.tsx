@@ -39,6 +39,10 @@ import {
   type Session,
 } from "../../slack/identity.ts";
 import { toFilterSources, toItems } from "../../slack/items.ts";
+import type { MembershipContext } from "../membership/membership-context.ts";
+import { PersonChannels } from "../membership/person-channels.tsx";
+import { ChannelMembers } from "../membership/channel-members.tsx";
+import { rowDetail } from "./row-detail.ts";
 import { MessageRow } from "./message-row.tsx";
 import { buildNames } from "../../slack/names.ts";
 import { listedPeople } from "../../slack/people.ts";
@@ -62,6 +66,8 @@ import {
 } from "../search/search.ts";
 import type { SearchStatus } from "../search/search-gate.ts";
 import {
+  DETAILS_SHORTCUT,
+  WRITE_SHORTCUT,
   FILTER_SHORTCUT,
   FILTER_SHORTCUT_ALT,
   RELOAD_ALL_SHORTCUT,
@@ -473,21 +479,29 @@ function Hub({
   // 行に固有の操作があるときは、その操作のあとに置く
   const commonActions = actionsIn(COMMON_ACTIONS);
 
-  // サイドバーが出ているときだけ、すべての行（メッセージ・会話・人・候補・警告・状態の行と、一覧が空のとき）に置く Hide Details（⌘Y）。
-  // 会話・人の行に移ってもサイドバーは出したまま（右側は空）なので、どの行からも閉じられるようにする。
-  // 閉じているときは、メッセージ以外の行には置かない（サイドバーを出しても中身が空のため）。
-  // メッセージの行は、閉じているときの Show Details（⌘Y）を行の側に持つので、⌘Y は常に1つだけになる。
-  // 共通の3つ（COMMON_ACTIONS・standaloneActions）には入れず、行の操作の最後に足す
-  // （先頭の2つが ↵ と ⌘↵ を受け持つので、その前には置かない）
+  // 詳細を持たない候補・状態の行では、主操作の次に閉じる操作を置く。
   const hideDetails = showDetail ? (
     <Action
       key="hide-details"
       title="Hide Details"
       icon={Icon.Sidebar}
-      shortcut={Keyboard.Shortcut.Common.ToggleQuickLook}
+      shortcut={DETAILS_SHORTCUT}
       onAction={() => setShowDetail(false)}
     />
   ) : null;
+
+  const marksRef = useRef(triage.marks);
+  marksRef.current = triage.marks;
+  const membershipContext: MembershipContext = {
+    session,
+    people: people.data ?? [],
+    prefs,
+    names,
+    isMarked: (hit) => marksRef.current.has(hit.key),
+    markOpened: triage.markOpened,
+    markReplied: triage.markReplied,
+    toggleHandled: triage.toggleHandled,
+  };
 
   // メッセージの行（空欄の自分宛てと検索結果で共通）。id は、同じメッセージが両方に出ても重ならない行の id
   const messageRow = (hit: Hit, id: string, state: ReadState | undefined) => (
@@ -498,6 +512,7 @@ function Hub({
       hit={hit}
       names={names}
       state={state}
+      membershipContext={membershipContext}
       marked={triage.marks.has(hit.key)}
       showDetail={showDetail}
       onToggleDetail={() => setShowDetail((v) => !v)}
@@ -509,7 +524,7 @@ function Hub({
       onOpen={() => triage.markOpened(hit)}
       onReplied={() => triage.markReplied(hit)}
       onToggleHandled={() => triage.toggleHandled(hit)}
-      common={[...commonActions, hideDetails]}
+      common={commonActions}
     />
   );
 
@@ -538,10 +553,17 @@ function Hub({
     .map((f) => `${f.negated ? "-" : ""}${f.modifier}:${f.label}`)
     .join(" ");
   // 検索の停止・失敗の行は、↵ で検索を取り直せるよう、1番目を Reload Search にする
-  const statusRow = searchStatusRow(search.status, resolved.query, [
-    ...actionsIn(standaloneActions("search-status")),
-    hideDetails,
-  ]);
+  const standaloneWithDetails = (
+    kind: Parameters<typeof standaloneActions>[0],
+  ) => {
+    const [primary, ...rest] = actionsIn(standaloneActions(kind));
+    return [primary, hideDetails, ...rest];
+  };
+  const statusRow = searchStatusRow(
+    search.status,
+    resolved.query,
+    standaloneWithDetails("search-status"),
+  );
 
   return (
     <List
@@ -582,12 +604,7 @@ function Hub({
             : `${MEMBERSHIP_TITLES[membership]}では見つかりません`
         }
         description="検索欄の右のドロップダウンで、参加中・未参加の絞り込みを切り替えられます"
-        actions={
-          <ActionPanel>
-            {actionsIn(standaloneActions("empty"))}
-            {hideDetails}
-          </ActionPanel>
-        }
+        actions={<ActionPanel>{standaloneWithDetails("empty")}</ActionPanel>}
       />
       {/* 今回の auth.test が取れなかったとき：理由を一覧の先頭に出す。下の一覧は、前回の結果の人の保存したもの
           （Slack からは取らない）。この行の1番目の操作（↵）は、設定を開く操作。
@@ -602,8 +619,8 @@ function Hub({
             actions={
               <ActionPanel>
                 {openPreferencesAction}
-                {commonActions}
                 {hideDetails}
+                {commonActions}
               </ActionPanel>
             }
           />
@@ -629,8 +646,8 @@ function Hub({
                         icon={Icon.ArrowRight}
                         onAction={() => confirmCandidate(c)}
                       />
-                      {commonActions}
                       {hideDetails}
+                      {commonActions}
                     </ActionPanel>
                   }
                 />
@@ -644,8 +661,7 @@ function Hub({
                   subtitle="候補から選ぶか、正式名で打ってください（この絞り込みは送りません）"
                   actions={
                     <ActionPanel>
-                      {actionsIn(standaloneActions("unresolved-filter"))}
-                      {hideDetails}
+                      {standaloneWithDetails("unresolved-filter")}
                     </ActionPanel>
                   }
                 />
@@ -676,6 +692,14 @@ function Hub({
                     title={item.title}
                     subtitle={item.subtitle}
                     icon={ICONS[item.kind]}
+                    detail={
+                      <List.Item.Detail
+                        markdown={rowDetail(
+                          item,
+                          people.data?.find((person) => person.id === item.id),
+                        )}
+                      />
+                    }
                     accessories={[
                       ...(unread
                         ? [
@@ -711,10 +735,16 @@ function Hub({
                             return visitItem(item);
                           }}
                         />
-                        {/* 2番目の操作。ショートカットを付けないと、List では ⌘↵ になる */}
+                        <Action
+                          title={showDetail ? "Hide Details" : "Show Details"}
+                          icon={Icon.Sidebar}
+                          shortcut={DETAILS_SHORTCUT}
+                          onAction={() => setShowDetail((value) => !value)}
+                        />
                         <Action.Push
                           title="Write"
                           icon={Icon.Message}
+                          shortcut={WRITE_SHORTCUT}
                           target={
                             <ComposeForm
                               session={session}
@@ -723,6 +753,38 @@ function Hub({
                             />
                           }
                         />
+                        {session.canFetch && item.kind === "person" ? (
+                          <Action.Push
+                            title="View Channels with This Person"
+                            icon={Icon.Hashtag}
+                            target={
+                              <PersonChannels
+                                context={membershipContext}
+                                personId={item.id}
+                              />
+                            }
+                          />
+                        ) : null}
+                        {session.canFetch &&
+                        (item.kind === "channel" || item.kind === "private") ? (
+                          <Action.Push
+                            title="View Members"
+                            icon={Icon.TwoPeople}
+                            target={
+                              <ChannelMembers
+                                context={membershipContext}
+                                channel={{
+                                  id: item.id,
+                                  name: item.title,
+                                  type:
+                                    item.kind === "private"
+                                      ? "private"
+                                      : "public",
+                                }}
+                              />
+                            }
+                          />
+                        ) : null}
                         {/* Tab と ⌘F は同じ操作（1つの操作に付けられるショートカットは1つなので、2つ置く） */}
                         <Action
                           title={filterTitle}
@@ -780,7 +842,6 @@ function Hub({
                           shortcut={Keyboard.Shortcut.Common.Copy}
                         />
                         {commonActions}
-                        {hideDetails}
                         <Action
                           title="Reset Ranking"
                           icon={Icon.ArrowCounterClockwise}

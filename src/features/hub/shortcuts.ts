@@ -32,8 +32,19 @@ export const HANDLED_SHORTCUT: Keyboard.Shortcut = {
 };
 
 // ⌘⇧↵ で、メッセージの行のスレッドに返信する。
-// メッセージの行の ↵ はサイドバーの出し入れ、⌘↵ は Slack で開く操作に使うので、返信には修飾キーを足したこのキーを使う
+// 一覧の ↵ は Slack で開く操作、⌘↵ は詳細の出し入れに使うので、返信は別のキーにする
 export const REPLY_SHORTCUT: Keyboard.Shortcut = {
   modifiers: ["cmd", "shift"],
   key: "return",
+};
+
+// ⌘↵ は一覧の詳細を出す・閉じる。2番目のActionの自動割当とそろえる。
+export const DETAILS_SHORTCUT: Keyboard.Shortcut = {
+  modifiers: ["cmd"],
+  key: "return",
+};
+// ⌘N で選択した会話・人への投稿フォームを開く。
+export const WRITE_SHORTCUT: Keyboard.Shortcut = {
+  modifiers: ["cmd"],
+  key: "n",
 };

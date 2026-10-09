@@ -30,7 +30,7 @@ export function slackAppUserLink(teamId: string, userId: string): string {
 // ブラウザを通らずに投稿の位置まで移動する。
 // message= は公式ドキュメントに無いが、この Mac で投稿まで移動することを確かめた（2026年10月4日）。
 // スレッドへの返信は、スレッドの親の ts（threadTs）も付けると、スレッドの中のその返信が開く。
-// 一覧のメッセージの行の Open in Slack（⌘↵。hits.ts の messageLink）と同じリンクにそろえるため、組み立ては messageLink に任せる
+// 一覧のメッセージの行の Open in Slack（↵。hits.ts の messageLink）と同じリンクにそろえるため、組み立ては messageLink に任せる
 export function slackAppMessageLink(
   teamId: string,
   channelId: string,

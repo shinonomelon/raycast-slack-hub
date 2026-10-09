@@ -11,11 +11,15 @@ import type { Session } from "../../slack/identity.ts";
 import { toMarkdown, toPlain } from "../../slack/mrkdwn.ts";
 import type { Names } from "../../slack/names.ts";
 import {
+  DETAILS_SHORTCUT,
   FILTER_SHORTCUT,
   FILTER_SHORTCUT_ALT,
   HANDLED_SHORTCUT,
   REPLY_SHORTCUT,
 } from "./shortcuts.ts";
+import type { MembershipContext } from "../membership/membership-context.ts";
+import { PersonChannels } from "../membership/person-channels.tsx";
+import { ChannelMembers } from "../membership/channel-members.tsx";
 import type { ReadState } from "../triage/triage.ts";
 
 // 読んだかの印。空欄の自分宛ての行と、対応済みの印が付いた検索結果の行に出す
@@ -43,10 +47,7 @@ const STATE_ACCESSORIES: Record<ReadState, List.Item.Accessory> = {
 };
 
 // メッセージの行。空欄の一覧の自分宛てと、検索結果で使う。List.Section の中に置ける。
-// ↵ で本文の全文をサイドバー（一覧の右の詳細）に出す・閉じる（読むだけなので、「開いた」の印は付けない）、
-// ⌘↵ でその位置（スレッド返信ならスレッドの中）を Slack で開き（「開いた」の印を付ける）、⌘⇧↵ でスレッドに返信する。
-// ⌘Y でもサイドバーを出せる。この行に置くのは、サイドバーが閉じているときだけ。出ているときの Hide Details（⌘Y）は、
-// 呼び出し側がすべての行に置くもの（common に入っている）が受け持つ。同じ操作パネルに ⌘Y が2つ並ばないようにするため
+// ↵ で Slack を開き、⌘↵ で詳細を出す・閉じる。詳細だけでは開いた印を付けない。
 export function MessageRow({
   session,
   id,
@@ -63,6 +64,7 @@ export function MessageRow({
   onReplied,
   onToggleHandled,
   common,
+  membershipContext,
 }: {
   // 自分の情報。Slack で開くリンクのワークスペースの ID（session.display.teamId）と、返信のフォームに使う
   session: Session;
@@ -82,15 +84,19 @@ export function MessageRow({
   conversationFilter: string | undefined;
   senderFilter: string | undefined;
   onFilter: (filter: string) => void;
-  // Slack で開いた（⌘↵）。呼び出し側が、印を付け、その会話の既読位置を忘れる。サイドバーを出し入れしたときは呼ばない
+  // Slack で開いた（↵）。呼び出し側が、印を付け、その会話の既読位置を忘れる。サイドバーを出し入れしたときは呼ばない
   onOpen: () => void;
   // 返信が届いた（成功のときだけ）。呼び出し側が、開いたときと同じ印を付ける
   onReplied: () => void;
   // ⌘⇧D：対応済みの印を付け外しする
   onToggleHandled: () => void;
-  // Shift+Tab・⌘R・⌘⇧R など、どの行にも置く操作。サイドバーが出ているときの Hide Details（⌘Y）も入る
+  // Shift+Tab・⌘R・⌘⇧R などの共通操作。詳細切替は行が持つのでここには含めない
   common: ReactNode;
+  membershipContext?: MembershipContext;
 }) {
+  const person = membershipContext?.people.find(
+    (person) => person.id === hit.userId && !person.isBot,
+  );
   const sender = names.sender(hit);
   const label = names.conversationLabel(hit);
   const date = new Date(Number(hit.ts.split(".")[0]) * 1000);
@@ -118,20 +124,18 @@ export function MessageRow({
       }
       actions={
         <ActionPanel>
-          {/* 1番目の操作。ショートカットを付けないと、List では ↵ になる。
-              サイドバーを出す・閉じるだけで、「開いた」の印は付けない（onOpen を呼ばない） */}
-          <Action
-            title={showDetail ? "Hide Details" : "Show Details"}
-            icon={Icon.Sidebar}
-            onAction={onToggleDetail}
-          />
-          {/* 2番目の操作。ショートカットを付けないと、List では ⌘↵ になる */}
           <Action.Open
             title="Open in Slack"
             icon={Icon.ArrowRight}
             target={messageLink(session.display.teamId, hit)}
             application="Slack"
             onOpen={onOpen}
+          />
+          <Action
+            title={showDetail ? "Hide Details" : "Show Details"}
+            icon={Icon.Sidebar}
+            shortcut={DETAILS_SHORTCUT}
+            onAction={onToggleDetail}
           />
           <Action.Push
             title="Reply in Thread"
@@ -176,16 +180,6 @@ export function MessageRow({
               onAction={() => onFilter(senderFilter)}
             />
           ) : null}
-          {/* ⌘Y でサイドバーを出す。閉じているときだけ置く。
-              出ているときの Hide Details（⌘Y）は common に入っているので、ここにも置くと ⌘Y が2つになる */}
-          {showDetail ? null : (
-            <Action
-              title="Show Details"
-              icon={Icon.Sidebar}
-              shortcut={Keyboard.Shortcut.Common.ToggleQuickLook}
-              onAction={onToggleDetail}
-            />
-          )}
           {hit.permalink ? (
             <Action.OpenInBrowser
               title="Open Permalink in Browser"
@@ -198,6 +192,35 @@ export function MessageRow({
               title="Copy Permalink"
               content={hit.permalink}
               shortcut={Keyboard.Shortcut.Common.Copy}
+            />
+          ) : null}
+          {membershipContext?.session.canFetch && person ? (
+            <Action.Push
+              title="View Channels with Sender"
+              icon={Icon.Hashtag}
+              target={
+                <PersonChannels
+                  context={membershipContext}
+                  personId={person.id}
+                />
+              }
+            />
+          ) : null}
+          {membershipContext?.session.canFetch &&
+          (hit.channelKind === "channel" || hit.channelKind === "private") ? (
+            <Action.Push
+              title="View Channel Members"
+              icon={Icon.TwoPeople}
+              target={
+                <ChannelMembers
+                  context={membershipContext}
+                  channel={{
+                    id: hit.channelId,
+                    name: hit.channelName ?? hit.channelId,
+                    type: hit.channelKind === "private" ? "private" : "public",
+                  }}
+                />
+              }
             />
           ) : null}
           {common}

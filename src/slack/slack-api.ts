@@ -2,6 +2,7 @@
 export type ApiMethod =
   | "auth.test"
   | "conversations.list"
+  | "conversations.members"
   | "users.list"
   | "users.conversations"
   | "search.messages"
