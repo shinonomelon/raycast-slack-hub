@@ -19,5 +19,5 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm test
       - run: npx tsc --noEmit
-      - run: npx eslint src
-      - run: npx prettier --check 'src/**/*.{ts,tsx}' package.json
+      - run: npx eslint src scripts
+      - run: npx prettier --check 'src/**/*.{ts,tsx}' 'scripts/*.mjs' package.json

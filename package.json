@@ -2,7 +2,7 @@
   "$schema": "https://www.raycast.com/schemas/extension.json",
   "name": "slack-hub",
   "title": "Slack Hub",
-  "description": "Search Slack conversations, people, and messages, review messages addressed to you, and post or reply in threads; requires a modified slack-cli and your own Slack user token.",
+  "description": "Search Slack conversations, people, and messages, review messages addressed to you, and post or reply using the official Slack Web API.",
   "icon": "slack-icon-rounded.png",
   "author": "shinonomelon",
   "license": "MIT",
@@ -11,27 +11,11 @@
   ],
   "preferences": [
     {
-      "name": "slackCliPath",
-      "title": "slack-cli Path",
-      "description": "改造版 slack-cli の dist/index.js、または slack-cli のコマンドのパス（~ 可）。空なら ~/.volta/bin・/opt/homebrew/bin・/usr/local/bin の順に slack-cli を探します",
-      "type": "textfield",
-      "required": false,
-      "placeholder": "~/slack-cli/dist/index.js"
-    },
-    {
-      "name": "nodePath",
-      "title": "Node Path",
-      "description": "slack-cli Path が .js のときに使う node のパス（~ 可）。空なら同じ順に node を探します",
-      "type": "textfield",
-      "required": false,
-      "placeholder": "~/.volta/bin/node"
-    },
-    {
-      "name": "slackCliProfile",
-      "title": "slack-cli Profile",
-      "description": "slack-cli config set --profile で付けた名前。空なら --profile を付けません",
-      "type": "textfield",
-      "required": false
+      "name": "accessToken",
+      "title": "Slack Access Token",
+      "description": "自分のUser OAuth Token（xoxp-）を設定してください。取得手順はREADMEを参照してください。",
+      "type": "password",
+      "required": true
     },
     {
       "name": "previousHandles",
@@ -63,7 +47,7 @@
     {
       "name": "slack-drafts",
       "title": "Slack Drafts",
-      "description": "Review the drafts you saved from Slack Hub, open them in Slack, and delete the records.",
+      "description": "Review legacy draft records saved by earlier versions. Creating Slack drafts is not supported by the public Web API.",
       "mode": "view",
       "keywords": [
         "draft"
@@ -87,7 +71,7 @@
     "dev": "ray develop",
     "lint": "ray lint",
     "fix-lint": "ray lint --fix",
-    "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/*.test.ts"
+    "test": "node scripts/test.mjs"
   },
   "engines": {
     "node": ">=22.22.2"
