@@ -6,17 +6,26 @@
 
 以下の機能は現在の版に含めていません。実装途中の画面、使えない操作、機能専用のAPI処理・テスト・依存パッケージを削除しました。再開時の要件と完了条件は各Issueに記載しています。削除したコードはGit履歴から参照できます。
 
-| 機能                               | 削除した理由                                                              | Issue                                                            |
-| ---------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| 下書きの保存・再編集               | 保存機能がなく、旧控えを読むコマンドだけが残っていた                      | [#1](https://github.com/shinonomelon/raycast-slack-hub/issues/1) |
-| メッセージ前後の履歴・スレッド閲覧 | 機能ゲートが無効。実APIと画面の受入検証が未完了                           | [#3](https://github.com/shinonomelon/raycast-slack-hub/issues/3) |
-| リアクションの追加・除去           | 読取・書込の機能ゲートが無効。実画面の検証が未完了                        | [#4](https://github.com/shinonomelon/raycast-slack-hub/issues/4) |
-| チャンネルのブックマーク           | 対応を後回しにし、操作入口を非表示にしていた                              | [#5](https://github.com/shinonomelon/raycast-slack-hub/issues/5) |
-| Slack Lists・タスク操作            | 権限・列の型・書き込みの検証が未完了で、操作入口を非表示にしていた        | [#6](https://github.com/shinonomelon/raycast-slack-hub/issues/6) |
-| 返信待ち候補の抽出・整理           | 候補取得・5分キャッシュは確認済み。実返信・中断・認証切替の受入検証が残る | [#7](https://github.com/shinonomelon/raycast-slack-hub/issues/7) |
-| AIによる返信優先候補の判定         | 実Jevによる日本語品質評価と送信・中断の実画面試験が未実施                 | [#8](https://github.com/shinonomelon/raycast-slack-hub/issues/8) |
+| 機能                               | 削除した理由                                                       | Issue                                                            |
+| ---------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| 下書きの保存・再編集               | 保存機能がなく、旧控えを読むコマンドだけが残っていた               | [#1](https://github.com/shinonomelon/raycast-slack-hub/issues/1) |
+| メッセージ前後の履歴・スレッド閲覧 | 機能ゲートが無効。実APIと画面の受入検証が未完了                    | [#3](https://github.com/shinonomelon/raycast-slack-hub/issues/3) |
+| リアクションの追加・除去           | 読取・書込の機能ゲートが無効。実画面の検証が未完了                 | [#4](https://github.com/shinonomelon/raycast-slack-hub/issues/4) |
+| チャンネルのブックマーク           | 対応を後回しにし、操作入口を非表示にしていた                       | [#5](https://github.com/shinonomelon/raycast-slack-hub/issues/5) |
+| Slack Lists・タスク操作            | 権限・列の型・書き込みの検証が未完了で、操作入口を非表示にしていた | [#6](https://github.com/shinonomelon/raycast-slack-hub/issues/6) |
 
 Slack Hubの検索結果の全文表示とスレッド返信は維持しています。空の検索欄に出る「自分宛て（過去7日）」も使えます。履歴を追加取得して返信待ちを判定する機能とは別です。
+
+## 返信待ち・Jevは開発版で検証中
+
+候補取得、返信・除外・延期、5分キャッシュ、任意のJev判定を復元しています。[使い方](reply-priority.md)を参照してください。SDKは0.6.0、モデルは`jev-1.13.0`を固定しています。
+
+| 内容                 | 残る検証                                                                            | Issue                                                            |
+| -------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| 返信待ちの抽出・整理 | 実返信の成功・失敗、中断、認証切替を含む実画面の受入試験                            | [#7](https://github.com/shinonomelon/raycast-slack-hub/issues/7) |
+| Jevによる並べ替え    | 実Jev品質試験は基準未達。分類・順位の改善と未使用群の再評価、送信・中断の実画面試験 | [#8](https://github.com/shinonomelon/raycast-slack-hub/issues/8) |
+
+自動テストと一部の実画面確認が済んでも、これらのIssueは全受入条件が揃うまで閉じません。
 
 ## 使える機能にも追加の確認が残る
 

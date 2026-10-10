@@ -6,6 +6,8 @@ export type ApiMethod =
   | "users.list"
   | "users.conversations"
   | "search.messages"
+  | "conversations.history"
+  | "conversations.replies"
   | "conversations.info"
   | "conversations.open"
   | "chat.postMessage";

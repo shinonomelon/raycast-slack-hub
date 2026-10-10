@@ -6,6 +6,7 @@ import {
   Keyboard,
   List,
   openExtensionPreferences,
+  useNavigation,
 } from "@raycast/api";
 import { useFrecencySorting } from "@raycast/utils";
 import {
@@ -17,6 +18,7 @@ import {
   type ReactNode,
 } from "react";
 import { ComposeForm } from "../compose/compose-form.tsx";
+import { ReplyPriorityScreen } from "../reply-priority/reply-priority-screen.tsx";
 import {
   destinationLabel,
   sendTargetOf,
@@ -231,6 +233,7 @@ export default function Command() {
     <Hub
       key={scopeKey(session.display)}
       session={session}
+      initialToken={settings.accessToken}
       previousHandles={settings.previousHandles}
       failure={failure}
       checking={checking}
@@ -240,11 +243,13 @@ export default function Command() {
 
 function Hub({
   session,
+  initialToken,
   previousHandles,
   failure,
   checking,
 }: {
   session: Session;
+  initialToken: string;
   // 設定の Previous Handles（カンマ区切り）
   previousHandles: string;
   // 今回の auth.test が取れなかった理由。あれば、一覧の先頭に理由の行を出す（前回の結果の人の一覧は、そのまま出す）
@@ -252,6 +257,7 @@ function Hub({
   // 今回の auth.test の結果を待っている
   checking: boolean;
 }) {
+  const { push } = useNavigation();
   // 一覧に出す人（前回の結果の人でもよい）。Slack から取るかは session.canFetch で決まり、ここでは判断しない
   const identity = session.display;
   // グループDMの名前から除く、自分のハンドル
@@ -588,7 +594,16 @@ function Hub({
         <List.Dropdown
           tooltip="参加しているかで絞る"
           value={membership}
-          onChange={(value) => setMembership(value as Membership)}
+          onChange={(value) => {
+            if (value === "reply-priority") {
+              push(
+                <ReplyPriorityScreen
+                  context={membershipContext}
+                  initialToken={initialToken}
+                />,
+              );
+            } else setMembership(value as Membership);
+          }}
         >
           {MEMBERSHIPS.map((m) => (
             <List.Dropdown.Item
@@ -597,6 +612,7 @@ function Hub({
               value={m}
             />
           ))}
+          <List.Dropdown.Item value="reply-priority" title="返信待ち" />
         </List.Dropdown>
       }
     >

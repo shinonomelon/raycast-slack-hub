@@ -6,18 +6,19 @@
 
 Slackアプリに許可する操作をスコープと呼びます。使うAPIごとに、次の権限が必要です。
 
-| 機能                                     | 公式API                 | User Token Scope                                                           |
-| ---------------------------------------- | ----------------------- | -------------------------------------------------------------------------- |
-| 自分とワークスペースの確認               | `auth.test`             | 追加スコープ不要                                                           |
-| 公開・非公開チャンネル、グループDMの一覧 | `conversations.list`    | `channels:read`・`groups:read`・`mpim:read`                                |
-| 参加中の公開チャンネル                   | `users.conversations`   | `channels:read`                                                            |
-| 人の参加チャンネル・全員の共通チャンネル | `users.conversations`   | `channels:read`・`groups:read`                                             |
-| チャンネルの参加者                       | `conversations.members` | `channels:read`・`groups:read`                                             |
-| 人の一覧                                 | `users.list`            | `users:read`                                                               |
-| メッセージ検索、自分宛て                 | `search.messages`       | `search:read`                                                              |
-| 既読位置                                 | `conversations.info`    | `channels:read`・`groups:read`・`im:read`・`mpim:read`（会話の種類による） |
-| 投稿、スレッド返信                       | `chat.postMessage`      | `chat:write`                                                               |
-| 人へのDMの開始                           | `conversations.open`    | `im:write`                                                                 |
+| 機能                                     | 公式API                                          | User Token Scope                                                                       |
+| ---------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| 自分とワークスペースの確認               | `auth.test`                                      | 追加スコープ不要                                                                       |
+| 公開・非公開チャンネル、グループDMの一覧 | `conversations.list`                             | `channels:read`・`groups:read`・`mpim:read`                                            |
+| 参加中の公開チャンネル                   | `users.conversations`                            | `channels:read`                                                                        |
+| 人の参加チャンネル・全員の共通チャンネル | `users.conversations`                            | `channels:read`・`groups:read`                                                         |
+| チャンネルの参加者                       | `conversations.members`                          | `channels:read`・`groups:read`                                                         |
+| 人の一覧                                 | `users.list`                                     | `users:read`                                                                           |
+| メッセージ検索、自分宛て                 | `search.messages`                                | `search:read`                                                                          |
+| 既読位置                                 | `conversations.info`                             | `channels:read`・`groups:read`・`im:read`・`mpim:read`（会話の種類による）             |
+| 投稿、スレッド返信                       | `chat.postMessage`                               | `chat:write`                                                                           |
+| 返信待ちの会話・スレッド確認             | `conversations.history`・`conversations.replies` | `im:history`・`channels:history`・`groups:history`・`mpim:history`（会話の種類による） |
+| 人へのDMの開始                           | `conversations.open`                             | `im:write`                                                                             |
 
 スコープを追加したらアプリを再インストールし、トークンが変わった場合はRaycastの設定も更新します。メールアドレスを取得しないので`users:read.email`は不要です。
 
@@ -25,13 +26,15 @@ Slackアプリに許可する操作をスコープと呼びます。使うAPIご
 
 | 保存先                                           | 内容                                                                                                                       |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Raycastのpassword設定                            | User OAuth Token。通信のAuthorizationヘッダーにだけ渡し、ログやキャッシュには保存しません                                  |
+| Raycastのpassword設定                            | User OAuth Tokenと任意のTypeSafe APIキー。各サービスの通信にだけ渡し、ログやキャッシュには保存しません                     |
 | RaycastのCache（ワークスペースID・ユーザーID別） | 会話・人の一覧、参加中の公開チャンネル、既読位置、行を開いた時刻、対応済みの印、自分宛ての前回結果、お気に入りの未読の目安 |
 | 認証用Cache                                      | `auth.test`の結果。キーはトークンのハッシュで、生のトークンは含みません                                                    |
 | 共通Cache                                        | 検索を止める期限、よく開く順の記録                                                                                         |
 | 拡張の`prefs.json`                               | お気に入り、別名、置き換え辞書、参加中の絞り込み                                                                           |
 
 Cacheと保存ファイルは`~/Library/Application Support/com.raycast.macos/extensions/slack-hub/`配下にあります。Cacheは暗号化されません。自分宛ての前回結果には本文の先頭300字までが含まれます。お気に入りの未読結果には本文を保存しません。
+
+返信待ちでは候補本文・履歴確認・続きの取得位置・AI結果を5分保存します。除外・延期の印は14日で破棄します。期限切れは読み込み時に削除します。期間や認証設定が変わった場合は以前の結果を使いません。[返信待ちの使い方](reply-priority.md)も参照してください。
 
 人の参加チャンネルとチャンネル参加者はメモリ内で2分間再利用します。認証クライアントと本人ごとに分け、完全に取得した結果だけを保存します。Refreshでは再利用せず取り直します。
 
@@ -68,10 +71,8 @@ npm run dev
 
 テスト・ビルド・コードの配置は[開発手順](development.md)を参照してください。
 
-## 未完了機能を使っていた場合
+## 旧版の保存データ
 
-今回の整理でSlack Drafts、返信待ち・AI判定とTypeSafe APIキーの設定項目を削除しました。履歴・リアクションの検証待ち画面と、非表示だったブックマーク・Listsのコードも削除しています。
+Slack Drafts、履歴・リアクションの検証待ち画面、ブックマーク・Listsのコードは削除しています。既存の`drafts.json`などは自動で削除せず、この版では読み込みません。保存フォルダを丸ごと削除すると、お気に入りや対応済みの印も失われます。
 
-既存の`drafts.json`、返信待ちの本文キャッシュ、旧キー設定などを自動では削除しません。この版では読み込みません。不要なデータを消す場合は、必要な控えと`prefs.json`を退避してから、拡張の保存フォルダを整理してください。保存フォルダを丸ごと削除すると、お気に入りや対応済みの印も失われます。機能を削除したため、旧返信待ちキャッシュの期限切れ削除は動きません。
-
-現在の版はTypeSafeへ接続せず、APIキーも不要です。再開予定は[対応予定](roadmap.md)で確認できます。
+返信待ち・Jevは開発版に復元しています。旧キー設定が残っていても自動送信しません。保存結果は認証・期間・モデル・判定文と期限を照合して使います。残る検証は[対応予定](roadmap.md)で確認できます。

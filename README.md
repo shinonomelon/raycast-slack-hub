@@ -61,7 +61,9 @@ Raycastの設定 → **Extensions → Slack Hub → Slack Access Token**に入�
 
 [詳しい使い方](docs/usage.md)に検索条件・全操作・ショートカットをまとめています。
 
-未完了の機能は公開コードから外しました。下書き、履歴・スレッド閲覧、リアクション、ブックマーク、Lists、返信待ち・AI判定は[対応予定](docs/roadmap.md)からIssueを確認できます。
+開発版では[返信待ち・Jevによる並べ替え](docs/reply-priority.md)を復元しています。実Jevの品質基準はまだ満たしておらず、実画面の受入検証も進行中です。AIを使う場合だけ、任意のTypeSafe APIキーが必要です。
+
+下書き、履歴・スレッド閲覧、リアクション、ブックマーク、Listsは未対応です。[対応予定](docs/roadmap.md)で確認できます。
 
 ## 更新・困ったとき
 
