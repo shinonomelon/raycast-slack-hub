@@ -41,6 +41,9 @@ import {
 import { toFilterSources, toItems } from "../../slack/items.ts";
 import type { MembershipContext } from "../membership/membership-context.ts";
 import { PersonChannels } from "../membership/person-channels.tsx";
+import { ListsScreen } from "../lists/lists-screen.tsx";
+import { FEATURE_GATES } from "../operations/feature-gates.ts";
+import { BookmarksScreen } from "../bookmarks/bookmarks-screen.tsx";
 import { ChannelMembers } from "../membership/channel-members.tsx";
 import { rowDetail } from "./row-detail.ts";
 import { MessageRow } from "./message-row.tsx";
@@ -443,7 +446,20 @@ function Hub({
     triage.revalidate();
   };
 
-  // どの行を選んでいても、一覧が空でも効くよう、すべての行と EmptyView に置く3つの操作。
+  const marksRef = useRef(triage.marks);
+  marksRef.current = triage.marks;
+  const membershipContext: MembershipContext = {
+    session,
+    people: people.data ?? [],
+    prefs,
+    names,
+    isMarked: (hit) => marksRef.current.has(hit.key),
+    markOpened: triage.markOpened,
+    markReplied: triage.markReplied,
+    toggleHandled: triage.toggleHandled,
+  };
+
+  // どの行を選んでいても、一覧が空でも共通操作へ進める。
   // 並べる順は行ごとに決める（actionsIn）。同じ操作を2つ置くとショートカットが重なるので、足さずに、順だけを替える
   const commonAction: Record<CommonAction, ReactElement> = {
     swap: (
@@ -474,8 +490,19 @@ function Hub({
       />
     ),
   };
-  const actionsIn = (order: readonly CommonAction[]) =>
-    order.map((name) => commonAction[name]);
+  const actionsIn = (order: readonly CommonAction[]) => [
+    ...order.map((name) => commonAction[name]),
+    ...(FEATURE_GATES.listsRead
+      ? [
+          <Action.Push
+            key="browse-lists"
+            title="Browse Lists"
+            icon={Icon.CheckList}
+            target={<ListsScreen context={membershipContext} />}
+          />,
+        ]
+      : []),
+  ];
   // 行に固有の操作があるときは、その操作のあとに置く
   const commonActions = actionsIn(COMMON_ACTIONS);
 
@@ -489,19 +516,6 @@ function Hub({
       onAction={() => setShowDetail(false)}
     />
   ) : null;
-
-  const marksRef = useRef(triage.marks);
-  marksRef.current = triage.marks;
-  const membershipContext: MembershipContext = {
-    session,
-    people: people.data ?? [],
-    prefs,
-    names,
-    isMarked: (hit) => marksRef.current.has(hit.key),
-    markOpened: triage.markOpened,
-    markReplied: triage.markReplied,
-    toggleHandled: triage.toggleHandled,
-  };
 
   // メッセージの行（空欄の自分宛てと検索結果で共通）。id は、同じメッセージが両方に出ても重ならない行の id
   const messageRow = (hit: Hit, id: string, state: ReadState | undefined) => (
@@ -786,6 +800,19 @@ function Hub({
                           />
                         ) : null}
                         {/* Tab と ⌘F は同じ操作（1つの操作に付けられるショートカットは1つなので、2つ置く） */}
+                        {FEATURE_GATES.bookmarksRead &&
+                        (item.kind === "channel" || item.kind === "private") ? (
+                          <Action.Push
+                            title="View Bookmarks"
+                            icon={Icon.Bookmark}
+                            target={
+                              <BookmarksScreen
+                                session={session}
+                                channel={{ id: item.id, name: item.title }}
+                              />
+                            }
+                          />
+                        ) : null}
                         <Action
                           title={filterTitle}
                           icon={Icon.Filter}

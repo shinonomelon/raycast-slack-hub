@@ -8,6 +8,8 @@ import {
 import { useState } from "react";
 import { toItems } from "../../slack/items.ts";
 import { ComposeForm } from "../compose/compose-form.tsx";
+import { BookmarksScreen } from "../bookmarks/bookmarks-screen.tsx";
+import { FEATURE_GATES } from "../operations/feature-gates.ts";
 import { slackAppChannelLink } from "../compose/compose.ts";
 import { addPerson, removePerson, MAX_PEOPLE } from "./membership.ts";
 import type { MembershipContext } from "./membership-context.ts";
@@ -196,6 +198,18 @@ export function PersonChannels({
                     />
                   }
                 />
+                {FEATURE_GATES.bookmarksRead ? (
+                  <Action.Push
+                    title="View Bookmarks"
+                    icon={Icon.Bookmark}
+                    target={
+                      <BookmarksScreen
+                        session={context.session}
+                        channel={{ id: row.id, name: row.title }}
+                      />
+                    }
+                  />
+                ) : null}
                 {controls}
               </ActionPanel>
             }

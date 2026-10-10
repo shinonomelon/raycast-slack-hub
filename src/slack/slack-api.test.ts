@@ -64,6 +64,50 @@ test("HTTPメソッドはauth.testとconversations.openがPOST、それ以外の
     await api(method);
   }
 });
+test("追加した読取POSTと書込はJSONを送り、履歴・反応取得・検索はGETになる", async () => {
+  const posts: ApiMethod[] = [
+    "bookmarks.list",
+    "bookmarks.add",
+    "bookmarks.edit",
+    "bookmarks.remove",
+    "reactions.add",
+    "reactions.remove",
+    "slackLists.items.list",
+    "slackLists.items.info",
+    "slackLists.items.create",
+    "slackLists.items.update",
+    "slackLists.items.delete",
+  ];
+  const gets: ApiMethod[] = [
+    "conversations.history",
+    "conversations.replies",
+    "reactions.get",
+    "search.files",
+    "chat.getPermalink",
+  ];
+  const params = {
+    list_id: "F123",
+    cells: [{ row_id: "R123", column_id: "Col123", user: ["U123"] }],
+  };
+  for (const method of [...posts, ...gets]) {
+    const api = createSlackApi(TOKEN, async (url, init) => {
+      assert.equal(new URL(String(url)).pathname, `/api/${method}`);
+      assert.equal(init?.method, posts.includes(method) ? "POST" : "GET");
+      if (posts.includes(method)) {
+        assert.deepEqual(JSON.parse(String(init?.body)), params);
+        assert.equal(new URL(String(url)).search, "");
+      } else {
+        assert.equal(init?.body, undefined);
+      }
+      assert.equal(
+        new Headers(init?.headers).get("Authorization"),
+        `Bearer ${TOKEN}`,
+      );
+      return json({ ok: true });
+    });
+    await api(method, params);
+  }
+});
 test("Bot・空トークンはHTTP要求を送る前に拒否する", async () => {
   for (const token of ["", "xoxb-bot", "xapp-app", "invalid"]) {
     let calls = 0;

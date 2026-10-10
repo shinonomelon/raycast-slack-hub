@@ -21,6 +21,7 @@ import type { MembershipContext } from "../membership/membership-context.ts";
 import { PersonChannels } from "../membership/person-channels.tsx";
 import { ChannelMembers } from "../membership/channel-members.tsx";
 import type { ReadState } from "../triage/triage.ts";
+import { MessageActions } from "../operations/message-actions.tsx";
 
 // 読んだかの印。空欄の自分宛ての行と、対応済みの印が付いた検索結果の行に出す
 const STATE_ACCESSORIES: Record<ReadState, List.Item.Accessory> = {
@@ -65,6 +66,8 @@ export function MessageRow({
   onToggleHandled,
   common,
   membershipContext,
+  detailText,
+  replyEnabled = true,
 }: {
   // 自分の情報。Slack で開くリンクのワークスペースの ID（session.display.teamId）と、返信のフォームに使う
   session: Session;
@@ -93,6 +96,10 @@ export function MessageRow({
   // Shift+Tab・⌘R・⌘⇧R などの共通操作。詳細切替は行が持つのでここには含めない
   common: ReactNode;
   membershipContext?: MembershipContext;
+  // 履歴・スレッドの全文。検索結果の短いHitは永続保存の用途を維持する。
+  detailText?: string;
+  // 親を解決できていない新しいスレッド画面では、返信を開かない。
+  replyEnabled?: boolean;
 }) {
   const person = membershipContext?.people.find(
     (person) => person.id === hit.userId && !person.isBot,
@@ -105,7 +112,7 @@ export function MessageRow({
   const parent = replyParentText({
     sender,
     time: date.toLocaleString("ja-JP"),
-    body: toPlain(hit.text, names.lookup),
+    body: toPlain(detailText ?? hit.text, names.lookup),
   });
   return (
     <List.Item
@@ -119,7 +126,7 @@ export function MessageRow({
       ]}
       detail={
         <List.Item.Detail
-          markdown={`**${sender}** · ${label} · ${date.toLocaleString("ja-JP")}\n\n${toMarkdown(hit.text, names.lookup)}`}
+          markdown={`**${sender}** · ${label} · ${date.toLocaleString("ja-JP")}\n\n${toMarkdown(detailText ?? hit.text, names.lookup)}`}
         />
       }
       actions={
@@ -137,20 +144,26 @@ export function MessageRow({
             shortcut={DETAILS_SHORTCUT}
             onAction={onToggleDetail}
           />
-          <Action.Push
-            title="Reply in Thread"
-            icon={Icon.Reply}
-            shortcut={REPLY_SHORTCUT}
-            target={
-              <ComposeForm
-                session={session}
-                target={target}
-                destination={label}
-                reply={{ threadTs, parentTitle: replyParentTitle(hit), parent }}
-                onReplied={onReplied}
-              />
-            }
-          />
+          {replyEnabled ? (
+            <Action.Push
+              title="Reply in Thread"
+              icon={Icon.Reply}
+              shortcut={REPLY_SHORTCUT}
+              target={
+                <ComposeForm
+                  session={session}
+                  target={target}
+                  destination={label}
+                  reply={{
+                    threadTs,
+                    parentTitle: replyParentTitle(hit),
+                    parent,
+                  }}
+                  onReplied={onReplied}
+                />
+              }
+            />
+          ) : null}
           <Action
             title={marked ? "Unmark as Handled" : "Mark as Handled"}
             icon={marked ? Icon.Circle : Icon.CheckCircle}
@@ -222,6 +235,9 @@ export function MessageRow({
                 />
               }
             />
+          ) : null}
+          {membershipContext ? (
+            <MessageActions context={membershipContext} hit={hit} />
           ) : null}
           {common}
         </ActionPanel>
