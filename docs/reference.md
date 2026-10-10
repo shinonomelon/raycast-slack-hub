@@ -6,32 +6,35 @@
 
 Slackアプリに許可する操作をスコープと呼びます。使うAPIごとに、次の権限が必要です。
 
-| 機能                                     | 公式API               | User Token Scope                                                           |
-| ---------------------------------------- | --------------------- | -------------------------------------------------------------------------- |
-| 自分とワークスペースの確認               | `auth.test`           | 追加スコープ不要                                                           |
-| 公開・非公開チャンネル、グループDMの一覧 | `conversations.list`  | `channels:read`・`groups:read`・`mpim:read`                                |
-| 参加中の公開チャンネル                   | `users.conversations` | `channels:read`                                                            |
-| 人の参加チャンネル・全員の共通チャンネル | `users.conversations` | `channels:read`・`groups:read` |
-| チャンネルの参加者 | `conversations.members` | `channels:read`・`groups:read` |
-| 人の一覧                                 | `users.list`          | `users:read`                                                               |
-| メッセージ検索、自分宛て                 | `search.messages`     | `search:read`                                                              |
-| 既読位置                                 | `conversations.info`  | `channels:read`・`groups:read`・`im:read`・`mpim:read`（会話の種類による） |
-| 投稿、スレッド返信                       | `chat.postMessage`    | `chat:write`                                                               |
-| 人へのDMの開始                           | `conversations.open`  | `im:write`                                                                 |
+| 機能                                     | 公式API                                          | User Token Scope                                                                             |
+| ---------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| 自分とワークスペースの確認               | `auth.test`                                      | 追加スコープ不要                                                                             |
+| 公開・非公開チャンネル、グループDMの一覧 | `conversations.list`                             | `channels:read`・`groups:read`・`mpim:read`                                                  |
+| 参加中の公開チャンネル                   | `users.conversations`                            | `channels:read`                                                                              |
+| 人の参加チャンネル・全員の共通チャンネル | `users.conversations`                            | `channels:read`・`groups:read`                                                               |
+| チャンネルの参加者                       | `conversations.members`                          | `channels:read`・`groups:read`                                                               |
+| 人の一覧                                 | `users.list`                                     | `users:read`                                                                                 |
+| メッセージ検索、自分宛て                 | `search.messages`                                | `search:read`                                                                                |
+| 返信待ちの履歴確認                       | `conversations.history`・`conversations.replies` | `im:history`・`channels:history`・`groups:history`・`mpim:history`（対象会話に対応するもの） |
+| 既読位置                                 | `conversations.info`                             | `channels:read`・`groups:read`・`im:read`・`mpim:read`（会話の種類による）                   |
+| 投稿、スレッド返信                       | `chat.postMessage`                               | `chat:write`                                                                                 |
+| 人へのDMの開始                           | `conversations.open`                             | `im:write`                                                                                   |
 
 スコープを追加したらアプリを再インストールし、トークンが変わった場合はRaycastの設定も更新します。メールアドレスを取得しないので`users:read.email`は不要です。
 
 ## 保存するデータ
 
-| 保存先                                           | 内容                                                                                                                       |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Raycastのpassword設定                            | User OAuth Token。通信のAuthorizationヘッダーにだけ渡し、ログやキャッシュには保存しません                                  |
-| RaycastのCache（ワークスペースID・ユーザーID別） | 会話・人の一覧、参加中の公開チャンネル、既読位置、行を開いた時刻、対応済みの印、自分宛ての前回結果、お気に入りの未読の目安 |
-| 認証用Cache                                      | `auth.test`の結果。キーはトークンのハッシュで、生のトークンは含みません                                                    |
-| 共通Cache                                        | 検索を止める期限、よく開く順の記録                                                                                         |
-| 拡張の`prefs.json`                               | お気に入り、別名、置き換え辞書、参加中の絞り込み                                                                           |
-| 以前の`drafts.json`                              | 下書きの控え。暗号化しません。保存から30日で期限切れになります                                                             |
-| `drafts.json.broken-…`                           | 壊れた控えの退避ファイル。自動削除しません                                                                                 |
+| 保存先                                           | 内容                                                                                                                         |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| Raycastのpassword設定                            | User OAuth Token。通信のAuthorizationヘッダーにだけ渡し、ログやキャッシュには保存しません                                    |
+| Raycastの任意password設定                        | TypeSafe APIキー。本人がAI送信を有効にした場合だけTypeSafeの認証に使います                                                   |
+| 返信待ち専用Cache（本人別）                      | 本文・確認結果・取得位置・AI判定を5分間再利用。返信不要・延期の印とAPI再開可能時刻も保存。認証設定の変更時は以前の結果を削除 |
+| RaycastのCache（ワークスペースID・ユーザーID別） | 会話・人の一覧、参加中の公開チャンネル、既読位置、行を開いた時刻、対応済みの印、自分宛ての前回結果、お気に入りの未読の目安   |
+| 認証用Cache                                      | `auth.test`の結果。キーはトークンのハッシュで、生のトークンは含みません                                                      |
+| 共通Cache                                        | 検索を止める期限、よく開く順の記録                                                                                           |
+| 拡張の`prefs.json`                               | お気に入り、別名、置き換え辞書、参加中の絞り込み                                                                             |
+| 以前の`drafts.json`                              | 下書きの控え。暗号化しません。保存から30日で期限切れになります                                                               |
+| `drafts.json.broken-…`                           | 壊れた控えの退避ファイル。自動削除しません                                                                                   |
 
 Cacheと保存ファイルは`~/Library/Application Support/com.raycast.macos/extensions/slack-hub/`配下にあります。Cacheは暗号化されません。自分宛ての前回結果には本文の先頭300字までが含まれます。お気に入りの未読結果には本文を保存しません。
 

@@ -23,6 +23,13 @@
       "description": "Slack のハンドルを変えたことがある人だけ。前のハンドルをカンマ区切りで",
       "type": "textfield",
       "required": false
+    },
+    {
+      "name": "typesafeApiKey",
+      "title": "TypeSafe API Key (Optional)",
+      "description": "返信待ちのAI判定を使う場合だけ設定してください。本文のTypeSafeへの送信は、返信待ち画面で有効にした後に行います。",
+      "type": "password",
+      "required": false
     }
   ],
   "commands": [
@@ -56,7 +63,8 @@
   ],
   "dependencies": {
     "@raycast/api": "^2.4.0",
-    "@raycast/utils": "^2.3.2"
+    "@raycast/utils": "^2.3.2",
+    "@typesafe-ai/sdk": "0.6.0"
   },
   "devDependencies": {
     "@raycast/eslint-config": "^2.2.0",

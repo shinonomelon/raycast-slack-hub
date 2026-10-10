@@ -6,6 +6,7 @@ import {
   Keyboard,
   List,
   openExtensionPreferences,
+  useNavigation,
 } from "@raycast/api";
 import { useFrecencySorting } from "@raycast/utils";
 import {
@@ -47,6 +48,7 @@ import { BookmarksScreen } from "../bookmarks/bookmarks-screen.tsx";
 import { ChannelMembers } from "../membership/channel-members.tsx";
 import { rowDetail } from "./row-detail.ts";
 import { MessageRow } from "./message-row.tsx";
+import { ReplyPriorityScreen } from "../reply-priority/reply-priority-screen.tsx";
 import { buildNames } from "../../slack/names.ts";
 import { listedPeople } from "../../slack/people.ts";
 import { loadPrefs, savePrefs } from "../preferences/prefs.ts";
@@ -237,6 +239,7 @@ export default function Command() {
       previousHandles={settings.previousHandles}
       failure={failure}
       checking={checking}
+      initialToken={settings.accessToken}
     />
   );
 }
@@ -246,6 +249,7 @@ function Hub({
   previousHandles,
   failure,
   checking,
+  initialToken,
 }: {
   session: Session;
   // 設定の Previous Handles（カンマ区切り）
@@ -254,7 +258,9 @@ function Hub({
   failure: IdentityFailure | undefined;
   // 今回の auth.test の結果を待っている
   checking: boolean;
+  initialToken: string;
 }) {
+  const { push } = useNavigation();
   // 一覧に出す人（前回の結果の人でもよい）。Slack から取るかは session.canFetch で決まり、ここでは判断しない
   const identity = session.display;
   // グループDMの名前から除く、自分のハンドル
@@ -599,7 +605,16 @@ function Hub({
         <List.Dropdown
           tooltip="参加しているかで絞る"
           value={membership}
-          onChange={(value) => setMembership(value as Membership)}
+          onChange={(value) => {
+            if (value === "reply-priority") {
+              push(
+                <ReplyPriorityScreen
+                  context={membershipContext}
+                  initialToken={initialToken}
+                />,
+              );
+            } else setMembership(value as Membership);
+          }}
         >
           {MEMBERSHIPS.map((m) => (
             <List.Dropdown.Item
@@ -608,6 +623,7 @@ function Hub({
               value={m}
             />
           ))}
+          <List.Dropdown.Item title="返信待ち" value="reply-priority" />
         </List.Dropdown>
       }
     >
@@ -889,7 +905,7 @@ function Hub({
             <List.Section
               key="triage"
               title="自分宛て（過去7日）"
-              subtitle={`${triage.rows.length} 件 · @here・@channel・ユーザーグループ宛ては含まない`}
+              subtitle={`${triage.rows.length} 件`}
             >
               {triage.rows.map(({ hit, state }) =>
                 messageRow(hit, triageRowId(hit), state),

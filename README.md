@@ -69,6 +69,8 @@ Raycastで`Slack Hub`を開き、画面下部のActionsから操作を選びま�
 
 追加機能の操作と権限は[履歴・リアクションの使い方](docs/context-actions.md)を参照してください。現在ブックマークとListsの権限は不要で、追加権限がなくても既存の検索・投稿は使えます。
 
+「返信待ち」では過去24時間・7日間のDMと直接メンションを確認できます。任意のTypeSafe APIキーを設定すると、Jevで返信の優先候補を判定します。AIは初期状態で無効です。[使い方・送信内容・追加権限](docs/reply-priority.md)を確認してください。
+
 下書き保存には未対応です。`Slack Drafts`では過去の控えだけを閲覧できます。[対応状況はIssue #1](https://github.com/shinonomelon/raycast-slack-hub/issues/1)で確認できます。
 
 ## 更新・困ったとき
