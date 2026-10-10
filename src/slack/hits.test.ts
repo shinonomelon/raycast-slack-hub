@@ -100,7 +100,7 @@ test("会話の種類を印か ID の頭で見分ける", () => {
   assert.equal(kind({ id: "C123" }), "channel");
 });
 
-test("bot の投稿は添付の本文を使い、長い本文は切るが、メンションは切る前に判定する", () => {
+test("bot の投稿は添付の本文を使い、長い本文も全文を保持して末尾のメンションを判定する", () => {
   const bot = normalizeMatch(
     {
       ts: "1.000001",
@@ -113,15 +113,16 @@ test("bot の投稿は添付の本文を使い、長い本文は切るが、メ�
   assert.equal(bot?.text, "デプロイ完了");
   assert.equal(bot?.userId, undefined);
 
+  const body = `${"あ".repeat(400)} <@${SELF}> 本文の末尾`;
   const long = normalizeMatch(
     {
       ts: "1.000001",
-      text: `${"あ".repeat(400)} <@${SELF}>`,
+      text: body,
       channel: { id: "C1" },
     },
     SELF,
   );
-  assert.equal(long?.text.length, 301);
+  assert.equal(long?.text, body);
   assert.equal(long?.mentionsSelf, true);
 });
 

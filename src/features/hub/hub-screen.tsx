@@ -360,6 +360,9 @@ function Hub({
     [searchText, sources, identity.userId],
   );
   const search = useMessageSearch(resolved.query, session);
+  // 条件を変えた直後は前の検索結果が残るため、現在の検索式に一致する行だけを表示する。
+  const messageHits =
+    session.canFetch && search.query === resolved.query ? search.hits : [];
   // メッセージの行に出す名前は、ボットも含めた全員から引く（投稿者にボットが現れるため）
   const names = useMemo(
     () =>
@@ -379,7 +382,7 @@ function Hub({
     firstIds: {
       candidates: firstId(candidates, candidateRowId),
       conversations: firstId(shown, conversationRowId),
-      messages: firstId(search.hits, messageRowId),
+      messages: firstId(messageHits, messageRowId),
       triage: firstId(triage.rows, ({ hit }) => triageRowId(hit)),
     },
   });
@@ -871,21 +874,21 @@ function Hub({
           );
         }
         // メッセージ：検索結果（新しい順）。止まっている・失敗したときは、そのことを行に出す
-        if (!statusRow && search.hits.length === 0) return null;
+        if (!statusRow && messageHits.length === 0) return null;
         return (
           <List.Section
             key="messages"
             title="メッセージ"
             subtitle={
-              search.hits.length > 0
-                ? [filterLabels, `${search.hits.length} 件`]
+              messageHits.length > 0
+                ? [filterLabels, `${messageHits.length} 件`]
                     .filter(Boolean)
                     .join(" · ")
                 : undefined
             }
           >
             {statusRow}
-            {search.hits.map((hit) =>
+            {messageHits.map((hit) =>
               // 検索結果は既読位置を取らない。印が付いているものだけ、対応済みと出す
               messageRow(
                 hit,

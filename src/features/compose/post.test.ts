@@ -153,3 +153,91 @@ test("公式HTTP応答を通した投稿で、成功とAPI拒否を判定する"
     assert.equal(calls, 1);
   }
 });
+
+test("長い段落・見出し・文字参照は上限内のsectionとして1回だけ送る", async () => {
+  for (const markdown of [
+    "あ".repeat(3001),
+    "# " + "あ".repeat(3001),
+    "&".repeat(601),
+  ]) {
+    const { api, calls } = fake(async () => ({
+      ok: true,
+      channel: "C1",
+      ts: TS,
+    }));
+    assert.equal(
+      (await postMarkdown({ ...params, mentionIds: [], markdown, api })).kind,
+      "sent",
+    );
+    assert.equal(calls.length, 1);
+    const blocks = calls[0].params?.blocks as {
+      type: string;
+      text: { text: string };
+    }[];
+    assert.ok(blocks.length > 1);
+    assert.ok(
+      blocks.every(
+        (block) => block.type === "section" && block.text.text.length <= 3000,
+      ),
+    );
+  }
+});
+
+test("50blocksを超える本文はDMを開く前に明確な非送信失敗を返す", async () => {
+  for (const markdown of [
+    Array(51).fill("段落").join("\n\n"),
+    "a".repeat(150001),
+  ]) {
+    const { api, calls } = fake(async () => ({
+      ok: true,
+      channel: { id: "D2" },
+      ts: TS,
+    }));
+    const result = await postMarkdown({
+      ...params,
+      mentionIds: [],
+      target: { kind: "person", id: "U2" },
+      markdown,
+      api,
+    });
+    assert.equal(result.kind, "failed");
+    assert.ok(
+      result.kind === "failed" &&
+        /50/.test(result.message) &&
+        /送信していません/.test(result.message),
+    );
+    assert.equal(calls.length, 0);
+  }
+});
+
+test("50blocksちょうどは送信し、前置きメンションで51になる場合は拒否する", async () => {
+  const markdown = Array(50).fill("段落").join("\n\n");
+  const { api, calls } = fake(async () => ({
+    ok: true,
+    channel: "C1",
+    ts: TS,
+  }));
+  assert.equal(
+    (await postMarkdown({ ...params, mentionIds: [], markdown, api })).kind,
+    "sent",
+  );
+  assert.equal((calls[0].params?.blocks as unknown[]).length, 50);
+  assert.equal(
+    (await postMarkdown({ ...params, markdown, api })).kind,
+    "failed",
+  );
+  assert.equal(calls.length, 1);
+});
+
+test("分割できない巨大リンクは本文を変更して送らず検証エラーを返す", async () => {
+  const markdown = "[表示](https://example.com/" + "a".repeat(3000) + ")";
+  const { api, calls } = fake(async () => ({ ok: true }));
+  const result = await postMarkdown({ ...params, markdown, api });
+  assert.equal(result.kind, "failed");
+  assert.ok(
+    result.kind === "failed" &&
+      /3000/.test(result.message) &&
+      /送信していません/.test(result.message),
+  );
+  assert.equal(calls.length, 0);
+});

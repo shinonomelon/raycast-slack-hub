@@ -8,6 +8,7 @@ import {
   type SendTarget,
 } from "./compose.ts";
 import { toBlocks, toText } from "./md-to-blocks.ts";
+import { MessageLimitError, validateMessageBlocks } from "./message-limits.ts";
 import { object, SlackApiError, type ApiCall } from "../../slack/slack-api.ts";
 export async function postMarkdown(params: {
   target: SendTarget;
@@ -32,8 +33,11 @@ export async function postMarkdown(params: {
   try {
     const markdown = composeMarkdown(params.mentionIds, params.markdown);
     blocks = toBlocks(markdown);
+    validateMessageBlocks(blocks);
     text = toText(markdown);
-  } catch {
+  } catch (error) {
+    if (error instanceof MessageLimitError)
+      return { kind: "failed", message: error.message };
     return { kind: "failed", message: "本文を変換できませんでした" };
   }
   const started = Date.now();

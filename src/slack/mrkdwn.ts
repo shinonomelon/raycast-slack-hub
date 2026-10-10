@@ -66,9 +66,20 @@ const inner = (mark: string) =>
 const BOLD = new RegExp(`(^|\\s)\\*${inner("*")}\\*(?=\\s|$|[.,!?、。])`, "g");
 const STRIKE = new RegExp(`(^|\\s)~${inner("~")}~(?=\\s|$|[.,!?、。])`, "g");
 
-// 詳細ペイン用。Slack の太字 *x* と打ち消し ~x~ を Markdown の書き方に直す
+// 詳細ペイン用。コード領域は装飾・名前解決を適用せず、APIの文字参照だけ戻す。
+// 閉じていないフェンスは末尾までコードとして扱い、通常文は従来どおり変換する。
 export function toMarkdown(text: string, names: NameLookup): string {
-  return decodeEntities(replaceSpecial(text, names, "markdown"))
-    .replace(BOLD, "$1**$2**")
-    .replace(STRIKE, "$1~~$2~~");
+  const code = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
+  const normal = (value: string) =>
+    decodeEntities(replaceSpecial(value, names, "markdown"))
+      .replace(BOLD, "$1**$2**")
+      .replace(STRIKE, "$1~~$2~~");
+  let result = "";
+  let start = 0;
+  for (const match of text.matchAll(code)) {
+    result += normal(text.slice(start, match.index));
+    result += decodeEntities(match[0]);
+    start = match.index + match[0].length;
+  }
+  return result + normal(text.slice(start));
 }

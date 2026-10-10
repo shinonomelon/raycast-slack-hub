@@ -3,7 +3,7 @@
   "name": "slack-hub",
   "title": "Slack Hub",
   "description": "Search Slack conversations, people, and messages, find channels by their members, and post or reply using the official Slack Web API.",
-  "icon": "slack-icon-rounded.png",
+  "icon": "slack-hub-compass-v2.png",
   "author": "shinonomelon",
   "license": "MIT",
   "categories": [

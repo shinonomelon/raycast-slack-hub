@@ -177,3 +177,150 @@ test("Markdown のバックスラッシュエスケープを外す", () => {
   ]);
   assert.equal(toText("a \\< b"), "a &lt; b");
 });
+
+function sectionTexts(markdown: string): string[] {
+  return toBlocks(markdown).map((block) => {
+    assert.equal(block.type, "section");
+    const text = (block.text as { text: string }).text;
+    assert.ok(text.length <= 3000, `section length: ${text.length}`);
+    return text;
+  });
+}
+
+test("3000文字を超える通常段落は本文を失わずsectionへ分割する", () => {
+  for (const length of [3000, 3001, 9001]) {
+    const body = "あ".repeat(length);
+    const texts = sectionTexts(body);
+    assert.equal(texts.join(""), body);
+    assert.equal(texts.length, Math.ceil(length / 3000));
+  }
+});
+
+test("文字参照への変換後の長さで分割し、文字参照を途中で切らない", () => {
+  for (const [character, entity] of [
+    ["&", "&amp;"],
+    ["<", "&lt;"],
+    [">", "&gt;"],
+  ]) {
+    const body = "本文 " + character.repeat(3001);
+    const texts = sectionTexts(body);
+    assert.equal(texts.join(""), "本文 " + entity.repeat(3001));
+    assert.ok(
+      texts.every(
+        (text) => text.replace("本文 ", "").replaceAll(entity, "") === "",
+      ),
+    );
+  }
+  assert.deepEqual(sectionTexts("&".repeat(601)), [
+    "&amp;".repeat(600),
+    "&amp;",
+  ]);
+});
+
+test("長いMarkdown見出しとテンプレ見出しは各sectionで太字を維持する", () => {
+  for (const prefix of ["# ", "■ ", "*■ "]) {
+    const body = "&".repeat(1600);
+    const markdown = prefix + body + (prefix.startsWith("*") ? "*" : "");
+    const texts = sectionTexts(markdown);
+    assert.ok(
+      texts.every((text) => text.startsWith("*") && text.endsWith("*")),
+    );
+    assert.equal(
+      texts.map((text) => text.slice(1, -1)).join(""),
+      (prefix === "# " ? "" : "■ ") + "&amp;".repeat(1600),
+    );
+  }
+});
+
+test("分割境界のリンク・メンション・特殊表記・emojiは丸ごと残す", () => {
+  const cases = [
+    [
+      "[表示&名](https://example.com/path)",
+      "<https://example.com/path|表示&amp;名>",
+    ],
+    ["<@U123456>", "<@U123456>"],
+    ["<!subteam^S123|team>", "<!subteam^S123|team>"],
+    ["<#C123|channel>", "<#C123|channel>"],
+    [":party_parrot:", ":party_parrot:"],
+    ["https://example.com/path", "https://example.com/path"],
+  ];
+  for (const [source, rendered] of cases) {
+    const prefix = "a".repeat(2995) + " ";
+    const texts = sectionTexts(prefix + source + " 末尾");
+    assert.equal(texts.join(""), prefix + rendered + " 末尾");
+    assert.ok(texts.some((text) => text.includes(rendered)));
+  }
+});
+
+test("長い装飾とinline codeは分割した各片で閉じ、内容を失わない", () => {
+  for (const [sourceMarker, slackMarker] of [
+    ["**", "*"],
+    ["_", "_"],
+    ["~~", "~"],
+    ["`", "`"],
+  ]) {
+    const body = "あ&".repeat(1600);
+    const texts = sectionTexts(sourceMarker + body + sourceMarker);
+    assert.ok(
+      texts.every(
+        (text) => text.startsWith(slackMarker) && text.endsWith(slackMarker),
+      ),
+    );
+    assert.equal(
+      texts.map((text) => text.slice(1, -1)).join(""),
+      "あ&amp;".repeat(1600),
+    );
+  }
+});
+
+test("Unicodeのサロゲート・結合文字・ZWJ emojiを分割しない", () => {
+  for (const grapheme of ["😀", "e\u0301", "👨‍👩‍👧‍👦", "🇯🇵"]) {
+    const prefix = "a".repeat(2999);
+    const body = grapheme.repeat(800);
+    const texts = sectionTexts(prefix + body);
+    assert.equal(texts.join(""), prefix + body);
+    const allGraphemes = texts.flatMap((text) =>
+      Array.from(
+        new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+          text,
+        ),
+        (part) => part.segment,
+      ),
+    );
+    assert.deepEqual(allGraphemes, [
+      ...Array.from(prefix),
+      ...Array(800).fill(grapheme),
+    ]);
+  }
+});
+
+test("段落途中の装飾を境界で閉じ直し、装飾内のURLとemojiも保護する", () => {
+  const prefix = "a".repeat(2995) + " ";
+  const body = "あ&".repeat(1600);
+  const texts = sectionTexts(prefix + "**" + body + "** 末尾");
+  assert.equal(
+    texts.map((text) => text.replaceAll("*", "")).join(""),
+    prefix + "あ&amp;".repeat(1600) + " 末尾",
+  );
+  assert.ok(texts.every((text) => (text.match(/\*/g)?.length ?? 0) % 2 === 0));
+  for (const atomic of ["https://example.com/path", ":party_parrot:"]) {
+    const styled = sectionTexts(
+      "**" + "a".repeat(2990) + " " + atomic + " 末尾**",
+    );
+    assert.ok(styled.some((text) => text.includes(atomic)));
+    assert.equal(
+      styled.map((text) => text.slice(1, -1)).join(""),
+      "a".repeat(2990) + " " + atomic + " 末尾",
+    );
+  }
+});
+
+test("1sectionに収まらない単一リンクやgraphemeは破損させず拒否する", () => {
+  for (const body of [
+    "[表示](https://example.com/" + "a".repeat(3000) + ")",
+    "https://example.com/" + "a".repeat(3000),
+    "a" + "\u0301".repeat(3000),
+  ]) {
+    assert.throws(() => toBlocks(body), /3000/);
+  }
+});

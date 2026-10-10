@@ -15,6 +15,7 @@ import {
   pruneLastReads,
   pruneOpened,
   toggleHandled,
+  toTriageCacheEntry,
   unmarkHandled,
   type CachedLastRead,
   type FavoriteChunk,
@@ -126,14 +127,14 @@ export function createReadState(namespace: string) {
   // ---- 前回の整理の結果（自分宛て） -----------------------------------------------------
 
   // 前回の結果。開いた直後に出して、裏で取り直す。
-  // 本文は Hit の時点で300字に切ってある（保存するのは、一覧に出すのに要る項目だけ）。
+  // 本文は保存するコピーだけ300字に切る。画面に渡すHitは全文を持つ。
   // 検索が件数の上限で切れたときは、その境目（cappedBefore）も一緒に保存する
   function loadTriage(): TriageEntry | undefined {
     return parseTriageEntry(read("triage"));
   }
 
   function saveTriage(entry: TriageEntry): void {
-    write("triage", entry);
+    write("triage", toTriageCacheEntry(entry));
   }
 
   // ---- お気に入りのまとめ検索の結果 ------------------------------------------------------

@@ -11,15 +11,15 @@ export type Hit = {
   permalink: string;
   userId?: string;
   username?: string;
-  // Slack の書式のまま。Raycast の Cache は平文で保存されるので、長さを切って持つ
+  // Slack の書式のまま全文を持つ。Cacheへ保存するときだけ短いコピーにする
   text: string;
+  // 保存したプレビューで本文が切れている。通信で取得した全文には付けない
+  textIsPreview?: boolean;
   channelName?: string;
   channelKind: ChannelKind;
-  // 本文に自分へのメンションがあるか。本文を切る前に判定しておく
+  // 本文に自分へのメンションがあるか
   mentionsSelf: boolean;
 };
-
-const MAX_TEXT = 300;
 
 // Slack の ts（"1790967145.033309"）を比べる。parseFloat は16桁で精度が落ちるので、秒と小数部を分けて整数で比べる
 export function compareTs(a: string, b: string): number {
@@ -115,7 +115,7 @@ export function normalizeMatch(raw: unknown, selfId: string): Hit | undefined {
     permalink: m.permalink ?? "",
     userId: m.user || undefined,
     username: m.username || undefined,
-    text: body.length > MAX_TEXT ? `${body.slice(0, MAX_TEXT)}…` : body,
+    text: body,
     channelName: m.channel?.name || undefined,
     channelKind: channelKind(m.channel ?? {}, channelId),
     mentionsSelf:

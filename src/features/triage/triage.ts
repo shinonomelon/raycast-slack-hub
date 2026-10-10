@@ -728,6 +728,8 @@ function isHit(value: unknown): value is Hit {
     isString(value.ts) &&
     isString(value.permalink) &&
     isString(value.text) &&
+    (value.textIsPreview === undefined ||
+      typeof value.textIsPreview === "boolean") &&
     isString(value.channelKind) &&
     CHANNEL_KINDS.has(value.channelKind) &&
     typeof value.mentionsSelf === "boolean" &&
@@ -794,12 +796,30 @@ export function parseOpened(raw: unknown): Opened {
   return opened;
 }
 
-// 自分宛ての検索結果。本文は Hit の時点で300字に切ってある。
+// 自分宛ての検索結果。通信で取得した本文は全文、保存した結果はプレビュー。
 // cappedBefore は、検索が件数の上限で切れたときの境目（cappedBeforeOf）。切れていなければ持たない
 export type Mentions = { hits: Hit[]; cappedBefore?: string };
 
 // 前回の整理の結果
 export type TriageEntry = Mentions & { at: number };
+
+const TRIAGE_PREVIEW_LENGTH = 300;
+
+// Cacheは平文なので、本文を短くした保存用コピーを作る。画面に渡した全文は変えない
+export function toTriageCacheEntry(entry: TriageEntry): TriageEntry {
+  return {
+    ...entry,
+    hits: entry.hits.map((hit) =>
+      hit.text.length > TRIAGE_PREVIEW_LENGTH
+        ? {
+            ...hit,
+            text: `${hit.text.slice(0, TRIAGE_PREVIEW_LENGTH)}…`,
+            textIsPreview: true,
+          }
+        : { ...hit },
+    ),
+  };
+}
 
 // 保存した結果から、時刻を除いて自分宛ての結果だけを取り出す
 export function mentionsOf(entry: TriageEntry): Mentions {
@@ -817,7 +837,14 @@ export function parseTriageEntry(raw: unknown): TriageEntry | undefined {
   }
   return {
     at: raw.at,
-    hits: raw.hits.filter(isHit),
+    hits: raw.hits.filter(isHit).map((hit) => {
+      // 旧Cacheには印がない。従来の「300字＋省略記号」に一致する本文はプレビューとして扱う
+      const legacyPreview =
+        hit.text.length === TRIAGE_PREVIEW_LENGTH + 1 && hit.text.endsWith("…");
+      return hit.textIsPreview === true || legacyPreview
+        ? { ...hit, textIsPreview: true }
+        : hit;
+    }),
     // 形の合わない境目は使わない（次に取り直したときに付け直される）
     ...(isString(raw.cappedBefore) &&
       SLACK_TS.test(raw.cappedBefore) && { cappedBefore: raw.cappedBefore }),

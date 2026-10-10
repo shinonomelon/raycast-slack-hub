@@ -8,7 +8,8 @@ import {
 } from "../compose/compose.ts";
 import { messageLink, type Hit } from "../../slack/hits.ts";
 import type { Session } from "../../slack/identity.ts";
-import { toMarkdown, toPlain } from "../../slack/mrkdwn.ts";
+import { toPlain } from "../../slack/mrkdwn.ts";
+import { messageDetailBody } from "./message-detail.ts";
 import type { Names } from "../../slack/names.ts";
 import {
   DETAILS_SHORTCUT,
@@ -95,7 +96,7 @@ export function MessageRow({
   // Shift+Tab・⌘R・⌘⇧R などの共通操作。詳細切替は行が持つのでここには含めない
   common: ReactNode;
   membershipContext?: MembershipContext;
-  // 履歴・スレッドの全文。検索結果の短いHitは永続保存の用途を維持する。
+  // 履歴・スレッドの全文。指定がなければHitの本文を使う。
   detailText?: string;
   // 親を解決できていない新しいスレッド画面では、返信を開かない。
   replyEnabled?: boolean;
@@ -125,7 +126,7 @@ export function MessageRow({
       ]}
       detail={
         <List.Item.Detail
-          markdown={`**${sender}** · ${label} · ${date.toLocaleString("ja-JP")}\n\n${toMarkdown(detailText ?? hit.text, names.lookup)}`}
+          markdown={`**${sender}** · ${label} · ${date.toLocaleString("ja-JP")}\n\n${messageDetailBody(hit, names.lookup, detailText)}`}
         />
       }
       actions={

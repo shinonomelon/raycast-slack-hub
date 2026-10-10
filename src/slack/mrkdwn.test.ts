@@ -51,3 +51,46 @@ test("詳細は Markdown にする（リンク・太字・打ち消し、改行�
   // 掛け算のような * は太字にしない
   assert.equal(toMarkdown("2 * 3 * 4", names), "2 * 3 * 4");
 });
+
+test("fenced codeの装飾・Slackメンション・リンクはリテラルのまま表示する", () => {
+  const code =
+    "```\n*literal* ~literal~ <@U1> <#C1> <https://a.example|資料>\n```";
+  assert.equal(toMarkdown(code, names), code);
+});
+
+test("inline codeの装飾・Slack表記を保持し、前後の通常文を変換する", () => {
+  assert.equal(
+    toMarkdown(
+      "*前* `*literal* ~literal~ <@U1> <https://a.example|資料>` ~後~ <@U1>",
+      names,
+    ),
+    "**前** `*literal* ~literal~ <@U1> <https://a.example|資料>` ~~後~~ @田中 太郎",
+  );
+});
+
+test("複数のコード領域と通常文を混在させても各領域を保持する", () => {
+  assert.equal(
+    toMarkdown(
+      "*前*\n```\n*literal* <@U1>\n```\n~中~ `~code~`\n```\n<https://a.example|資料>\n```\n<#C1> *後*",
+      names,
+    ),
+    "**前**\n```\n*literal* <@U1>\n```\n~~中~~ `~code~`\n```\n<https://a.example|資料>\n```\n#general **後**",
+  );
+});
+
+test("未閉じのfenced codeは末尾までリテラルとして扱う", () => {
+  assert.equal(
+    toMarkdown("*前*\n```\n*literal* ~literal~ <@U1>", names),
+    "**前**\n```\n*literal* ~literal~ <@U1>",
+  );
+});
+
+test("コード内でもAPIの文字参照を一度だけ戻し、名前解決を行わない", () => {
+  assert.equal(
+    toMarkdown(
+      "```\n&lt;@U1&gt; &amp; &amp;lt;\n``` `&lt;#C1&gt;`\n&lt;@U1&gt; <@U1> &amp;lt;",
+      names,
+    ),
+    "```\n<@U1> & &lt;\n``` `<#C1>`\n<@U1> @田中 太郎 &lt;",
+  );
+});

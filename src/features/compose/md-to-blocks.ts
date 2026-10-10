@@ -8,6 +8,8 @@
 //   - 装飾が文字に密着している段落は rich_text にする（mrkdwn の *太字* は日本語に密着すると効かない）
 //   - 取り消し線・斜体・引用・メンション・バックスラッシュエスケープ（エディタの Markdown 出力が付ける）
 
+import { MessageLimitError, SECTION_TEXT_LIMIT } from "./message-limits.ts";
+
 export type Block = Record<string, unknown>;
 type RichElement = Record<string, unknown>;
 
@@ -216,6 +218,97 @@ const section = (text: string): Block => ({
   text: { type: "mrkdwn", text },
 });
 
+// 文字参照とUnicodeの書記素は途中で切らず、装飾は分割片ごとに閉じる。
+// リンク・メンション・emojiは不可分として扱い、収まらないものは送信前に拒否する。
+function toSections(text: string, heading = false): Block[] {
+  const wrapper = heading ? "*" : "";
+  const rendered = toMrkdwn(text);
+  const limit = SECTION_TEXT_LIMIT - wrapper.length * 2;
+  if (rendered.length <= limit) return [section(wrapper + rendered + wrapper)];
+
+  const sections: Block[] = [];
+  let current = "";
+  const flush = () => {
+    if (!current) return;
+    sections.push(section(wrapper + current + wrapper));
+    current = "";
+  };
+  const tooLong = () => {
+    throw new MessageLimitError(
+      "リンク・メンション・文字がSlackのsectionの3000文字上限に収まりません。短くして投稿してください。投稿は送信していません",
+    );
+  };
+  const appendAtomic = (value: string) => {
+    if (value.length > limit) tooLong();
+    if (current.length + value.length > limit) flush();
+    current += value;
+  };
+  const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  function* units(value: string): Generator<string> {
+    // 装飾の中でも自動リンクやemoji表記を途中で切らない。
+    let pos = 0;
+    for (const match of value.matchAll(
+      /https?:\/\/[^\s<>]+|:[a-z0-9_+'-]+:/g,
+    )) {
+      for (const { segment } of segmenter.segment(
+        value.slice(pos, match.index),
+      ))
+        yield segment;
+      yield match[0];
+      pos = match.index + match[0].length;
+    }
+    for (const { segment } of segmenter.segment(value.slice(pos)))
+      yield segment;
+  }
+  const appendText = (value: string, marker = "") => {
+    let fragment = "";
+    for (const segment of units(value)) {
+      const unit = escapeSlack(segment);
+      if (unit.length + marker.length * 2 > limit) tooLong();
+      if (
+        current.length + fragment.length + unit.length + marker.length * 2 >
+        limit
+      ) {
+        if (fragment) current += marker + fragment + marker;
+        flush();
+        fragment = "";
+      }
+      fragment += unit;
+    }
+    if (fragment) current += marker + fragment + marker;
+  };
+  for (const token of tokenize(text)) {
+    switch (token.kind) {
+      case "text":
+        appendText(token.text);
+        break;
+      case "bold":
+      case "italic":
+      case "strike":
+      case "code":
+        appendText(
+          token.text,
+          { bold: "*", italic: "_", strike: "~", code: "`" }[token.kind],
+        );
+        break;
+      case "link":
+        appendAtomic(`<${token.url}|${escapeSlack(token.text)}>`);
+        break;
+      case "mention":
+        appendAtomic(`<@${token.userId}>`);
+        break;
+      case "special":
+        appendAtomic(token.raw);
+        break;
+      case "emoji":
+        appendAtomic(`:${token.name}:`);
+        break;
+    }
+  }
+  flush();
+  return sections;
+}
+
 // ---- blocks への変換 --------------------------------------------------------
 
 export function toBlocks(md: string): Block[] {
@@ -239,7 +332,7 @@ export function toBlocks(md: string): Block[] {
         ],
       });
     } else {
-      blocks.push(section(toMrkdwn(text)));
+      blocks.push(...toSections(text));
     }
     para.length = 0;
   };
@@ -350,7 +443,7 @@ export function toBlocks(md: string): Block[] {
     const mh = line.match(HEADING);
     if (mh) {
       flushPara();
-      blocks.push(section("*" + toMrkdwn(mh[2].trim()) + "*"));
+      blocks.push(...toSections(mh[2].trim(), true));
       continue;
     }
 
@@ -365,7 +458,7 @@ export function toBlocks(md: string): Block[] {
         stripped.startsWith("*") && stripped.endsWith("*")
           ? stripped.slice(1, -1)
           : stripped;
-      blocks.push(section("*" + toMrkdwn(inner) + "*"));
+      blocks.push(...toSections(inner, true));
       continue;
     }
 
