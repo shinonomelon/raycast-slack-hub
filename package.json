@@ -2,7 +2,7 @@
   "$schema": "https://www.raycast.com/schemas/extension.json",
   "name": "slack-hub",
   "title": "Slack Hub",
-  "description": "Search Slack conversations, people, and messages, review messages addressed to you, and post or reply using the official Slack Web API.",
+  "description": "Search Slack conversations, people, and messages, find channels by their members, and post or reply using the official Slack Web API.",
   "icon": "slack-icon-rounded.png",
   "author": "shinonomelon",
   "license": "MIT",
@@ -22,13 +22,6 @@
       "title": "Previous Handles",
       "description": "Slack のハンドルを変えたことがある人だけ。前のハンドルをカンマ区切りで",
       "type": "textfield",
-      "required": false
-    },
-    {
-      "name": "typesafeApiKey",
-      "title": "TypeSafe API Key (Optional)",
-      "description": "返信待ちのAI判定を使う場合だけ設定してください。本文のTypeSafeへの送信は、返信待ち画面で有効にした後に行います。",
-      "type": "password",
       "required": false
     }
   ],
@@ -50,21 +43,11 @@
       "description": "Refresh the cached Slack channels, people, and joined channels every 5 minutes when they are stale.",
       "mode": "no-view",
       "interval": "5m"
-    },
-    {
-      "name": "slack-drafts",
-      "title": "Slack Drafts",
-      "description": "Review legacy draft records saved by earlier versions. Creating Slack drafts is not supported by the public Web API.",
-      "mode": "view",
-      "keywords": [
-        "draft"
-      ]
     }
   ],
   "dependencies": {
     "@raycast/api": "^2.4.0",
-    "@raycast/utils": "^2.3.2",
-    "@typesafe-ai/sdk": "0.6.0"
+    "@raycast/utils": "^2.3.2"
   },
   "devDependencies": {
     "@raycast/eslint-config": "^2.2.0",

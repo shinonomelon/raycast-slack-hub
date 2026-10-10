@@ -21,7 +21,6 @@ import type { MembershipContext } from "../membership/membership-context.ts";
 import { PersonChannels } from "../membership/person-channels.tsx";
 import { ChannelMembers } from "../membership/channel-members.tsx";
 import type { ReadState } from "../triage/triage.ts";
-import { MessageActions } from "../operations/message-actions.tsx";
 
 // 読んだかの印。空欄の自分宛ての行と、対応済みの印が付いた検索結果の行に出す
 const STATE_ACCESSORIES: Record<ReadState, List.Item.Accessory> = {
@@ -235,9 +234,6 @@ export function MessageRow({
                 />
               }
             />
-          ) : null}
-          {membershipContext ? (
-            <MessageActions context={membershipContext} hit={hit} />
           ) : null}
           {common}
         </ActionPanel>

@@ -8,23 +8,7 @@ export type ApiMethod =
   | "search.messages"
   | "conversations.info"
   | "conversations.open"
-  | "chat.postMessage"
-  | "chat.getPermalink"
-  | "conversations.history"
-  | "conversations.replies"
-  | "reactions.get"
-  | "reactions.add"
-  | "reactions.remove"
-  | "bookmarks.list"
-  | "bookmarks.add"
-  | "bookmarks.edit"
-  | "bookmarks.remove"
-  | "search.files"
-  | "slackLists.items.list"
-  | "slackLists.items.info"
-  | "slackLists.items.create"
-  | "slackLists.items.update"
-  | "slackLists.items.delete";
+  | "chat.postMessage";
 export type ApiParams = Record<string, unknown>;
 export type ApiOptions = { timeoutMs?: number; signal?: AbortSignal };
 export type ApiCall = (
@@ -75,17 +59,6 @@ const POST_METHODS: ReadonlySet<ApiMethod> = new Set([
   "auth.test",
   "conversations.open",
   "chat.postMessage",
-  "reactions.add",
-  "reactions.remove",
-  "bookmarks.list",
-  "bookmarks.add",
-  "bookmarks.edit",
-  "bookmarks.remove",
-  "slackLists.items.list",
-  "slackLists.items.info",
-  "slackLists.items.create",
-  "slackLists.items.update",
-  "slackLists.items.delete",
 ]);
 export function createSlackApi(
   token: string,

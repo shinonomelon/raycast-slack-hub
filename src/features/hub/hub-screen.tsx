@@ -6,7 +6,6 @@ import {
   Keyboard,
   List,
   openExtensionPreferences,
-  useNavigation,
 } from "@raycast/api";
 import { useFrecencySorting } from "@raycast/utils";
 import {
@@ -42,13 +41,9 @@ import {
 import { toFilterSources, toItems } from "../../slack/items.ts";
 import type { MembershipContext } from "../membership/membership-context.ts";
 import { PersonChannels } from "../membership/person-channels.tsx";
-import { ListsScreen } from "../lists/lists-screen.tsx";
-import { FEATURE_GATES } from "../operations/feature-gates.ts";
-import { BookmarksScreen } from "../bookmarks/bookmarks-screen.tsx";
 import { ChannelMembers } from "../membership/channel-members.tsx";
 import { rowDetail } from "./row-detail.ts";
 import { MessageRow } from "./message-row.tsx";
-import { ReplyPriorityScreen } from "../reply-priority/reply-priority-screen.tsx";
 import { buildNames } from "../../slack/names.ts";
 import { listedPeople } from "../../slack/people.ts";
 import { loadPrefs, savePrefs } from "../preferences/prefs.ts";
@@ -239,7 +234,6 @@ export default function Command() {
       previousHandles={settings.previousHandles}
       failure={failure}
       checking={checking}
-      initialToken={settings.accessToken}
     />
   );
 }
@@ -249,7 +243,6 @@ function Hub({
   previousHandles,
   failure,
   checking,
-  initialToken,
 }: {
   session: Session;
   // 設定の Previous Handles（カンマ区切り）
@@ -258,9 +251,7 @@ function Hub({
   failure: IdentityFailure | undefined;
   // 今回の auth.test の結果を待っている
   checking: boolean;
-  initialToken: string;
 }) {
-  const { push } = useNavigation();
   // 一覧に出す人（前回の結果の人でもよい）。Slack から取るかは session.canFetch で決まり、ここでは判断しない
   const identity = session.display;
   // グループDMの名前から除く、自分のハンドル
@@ -496,19 +487,8 @@ function Hub({
       />
     ),
   };
-  const actionsIn = (order: readonly CommonAction[]) => [
-    ...order.map((name) => commonAction[name]),
-    ...(FEATURE_GATES.listsRead
-      ? [
-          <Action.Push
-            key="browse-lists"
-            title="Browse Lists"
-            icon={Icon.CheckList}
-            target={<ListsScreen context={membershipContext} />}
-          />,
-        ]
-      : []),
-  ];
+  const actionsIn = (order: readonly CommonAction[]) =>
+    order.map((name) => commonAction[name]);
   // 行に固有の操作があるときは、その操作のあとに置く
   const commonActions = actionsIn(COMMON_ACTIONS);
 
@@ -605,16 +585,7 @@ function Hub({
         <List.Dropdown
           tooltip="参加しているかで絞る"
           value={membership}
-          onChange={(value) => {
-            if (value === "reply-priority") {
-              push(
-                <ReplyPriorityScreen
-                  context={membershipContext}
-                  initialToken={initialToken}
-                />,
-              );
-            } else setMembership(value as Membership);
-          }}
+          onChange={(value) => setMembership(value as Membership)}
         >
           {MEMBERSHIPS.map((m) => (
             <List.Dropdown.Item
@@ -623,7 +594,6 @@ function Hub({
               value={m}
             />
           ))}
-          <List.Dropdown.Item title="返信待ち" value="reply-priority" />
         </List.Dropdown>
       }
     >
@@ -816,19 +786,6 @@ function Hub({
                           />
                         ) : null}
                         {/* Tab と ⌘F は同じ操作（1つの操作に付けられるショートカットは1つなので、2つ置く） */}
-                        {FEATURE_GATES.bookmarksRead &&
-                        (item.kind === "channel" || item.kind === "private") ? (
-                          <Action.Push
-                            title="View Bookmarks"
-                            icon={Icon.Bookmark}
-                            target={
-                              <BookmarksScreen
-                                session={session}
-                                channel={{ id: item.id, name: item.title }}
-                              />
-                            }
-                          />
-                        ) : null}
                         <Action
                           title={filterTitle}
                           icon={Icon.Filter}

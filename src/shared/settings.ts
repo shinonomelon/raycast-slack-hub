@@ -11,9 +11,3 @@ export function readSettings(): Settings {
     previousHandles: text(values.previousHandles),
   };
 }
-
-// AIのキーはSlack認証の設定から分け、任意機能を使う画面でだけ読む。
-export function readReplyAISettings(): { typesafeApiKey: string } {
-  const values = getPreferenceValues<{ typesafeApiKey?: unknown }>();
-  return { typesafeApiKey: text(values.typesafeApiKey).trim() };
-}

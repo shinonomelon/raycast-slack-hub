@@ -1,17 +1,17 @@
 # Slack Hub
 
-RaycastからSlackのチャンネル・人・グループDMを探し、メッセージの検索・投稿・スレッド返信ができる拡張です。公式Slack Web APIへ直接接続するため、slack-cliは不要です。
+RaycastからSlackのチャンネル・人・グループDMを探し、メッセージの検索・投稿・スレッド返信ができる拡張です。公式Slack Web APIへ直接接続します。slack-cliは不要です。
 
-名前のファジー検索、お気に入り、別名、自分宛てのメッセージ整理にも対応しています。Raycast Storeには未公開です。
+名前のファジー検索、お気に入り、別名、自分宛ての整理、人の参加チャンネル・共通チャンネル検索に対応しています。Raycast Storeには未公開です。
 
 ## インストールする
 
-Mac、Raycast、git、Node.js 22.22.2以上が必要です。会話を開くにはSlackのデスクトップアプリも使います。
+Mac、Raycast、git、Node.js 22.22.2以上が必要です。会話を開くにはSlackのデスクトップアプリを使います。
 
 ### 1. Slackのユーザートークンを取得する
 
 1. [Slackのアプリ管理画面](https://api.slack.com/apps)でアプリを作り、使うワークスペースを選びます。
-2. **OAuth & Permissions → User Token Scopes**に、以下の8つを追加します。操作の許可を表す設定です。
+2. **OAuth & Permissions → User Token Scopes**に、次の8つを追加します。
 
    ```text
    channels:read
@@ -26,7 +26,7 @@ Mac、Raycast、git、Node.js 22.22.2以上が必要です。会話を開くに�
 
 3. **Install to Workspace**でインストールし、**User OAuth Token**（`xoxp-`）をコピーします。承認制のワークスペースでは管理者の承認が必要です。Bot Token（`xoxb-`）は使えません。
 
-トークンは自分としてSlackを読み書きできる鍵です。共有したりGitHubに貼ったりせず、コピー後はクリップボード履歴からも消してください。
+トークンは自分としてSlackを読み書きできる鍵です。GitHubやチャットに貼らず、コピー後はクリップボード履歴からも消してください。
 
 ### 2. 拡張をRaycastに取り込む
 
@@ -41,42 +41,32 @@ npm run dev
 
 ### 3. Raycastにトークンを設定する
 
-Raycastの設定→ **Extensions → Slack Hub → Slack Access Token**にトークンを入力し、Slack Hubを開き直します。初回は会話・人の一覧を取得するため少し待ちます。
+Raycastの設定 → **Extensions → Slack Hub → Slack Access Token**に入力し、Slack Hubを開き直します。初回は会話・人の一覧を取得するため少し待ちます。
 
-以前の版を使っていた人も入力が必要です。CLIの設定は自動で読みません。ハンドルを変更したことがある人は、任意設定の`Previous Handles`に以前の名前をカンマ区切りで入れてください。
+ハンドルを変更したことがある人は、任意設定の`Previous Handles`に以前の名前をカンマ区切りで入れてください。旧版のCLI設定は自動で読みません。
 
 ## よく使う操作
 
-Raycastで`Slack Hub`を開き、画面下部のActionsから操作を選びます。一覧ではReturnでSlackを開き、⌘Returnで詳細を表示・非表示にします。会話や人へのWriteは⌘Nです。以前の版とはメッセージのReturnと⌘Returnが入れ替わっています。
+一覧のReturnはSlackで開く、⌘Returnは詳細を表示・非表示、会話・人の⌘Nは投稿フォームです。Actionsからも選べます。
 
-| やりたいこと            | 操作                                                                     |
-| ----------------------- | ------------------------------------------------------------------------ |
-| チャンネルや人を開く    | 名前を入力 → 行を選ぶ → Open in Slack                                    |
-| メッセージを探す        | 語や`in:#チャンネル名`を入力 → 結果を選ぶ → Show Details                 |
-| メッセージをSlackで開く | メッセージを選ぶ → Open in Slack                                         |
-| 投稿・DMを送る          | 会話や人を選ぶ → Write → 本文を書く → Post and Open in Slack             |
-| スレッドに返信する      | メッセージを選ぶ → Reply in Thread → 本文を書く → Post and Open in Slack |
-| 自分宛てを確認する      | 検索欄を空にする → 「自分宛て（過去7日）」を見る                         |
-| 対応済みにする          | メッセージを選ぶ → Mark as Handled                                       |
-| お気に入りにする        | 会話や人を選ぶ → Add to Favorites                                        |
-| 一覧を更新する          | Reload Conversations and People。検索や未読情報だけならReload Search     |
+| やりたいこと             | 操作                                                                              |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| チャンネルや人を開く     | 名前を入力 → 行を選ぶ → Return                                                    |
+| メッセージを読む         | 検索語や`in:#チャンネル名`を入力 → 結果を選ぶ → ⌘Return                           |
+| 投稿・DMを送る           | 会話や人を選ぶ → Write → 本文を書く → Post and Open in Slack                      |
+| スレッドに返信する       | メッセージを選ぶ → Reply in Thread → 本文を書く → Post and Open in Slack          |
+| 自分宛てを整理する       | 検索欄を空にする → 自分宛ての行を選ぶ → Mark as Handled                           |
+| 人がいるチャンネルを探す | 人を選ぶ → View Channels with This Person。Add Personで全員の共通チャンネルに絞る |
+| チャンネルの参加者を見る | チャンネルを選ぶ → View Members                                                   |
 
-検索の条件や詳しい操作は[詳しい使い方](docs/usage.md)を参照してください。
+[詳しい使い方](docs/usage.md)に検索条件・全操作・ショートカットをまとめています。
 
-### 開発中の追加機能
-
-履歴・スレッドの閲覧とリアクションを追加しています。実APIでの検証が終わるまでは、新しいActionsを選ぶと検証待ちの案内が出ます。ブックマークとListsは後回しとし、操作入口を表示しません。
-
-追加機能の操作と権限は[履歴・リアクションの使い方](docs/context-actions.md)を参照してください。現在ブックマークとListsの権限は不要で、追加権限がなくても既存の検索・投稿は使えます。
-
-「返信待ち」では過去24時間・7日間のDMと直接メンションを確認できます。任意のTypeSafe APIキーを設定すると、Jevで返信の優先候補を判定します。AIは初期状態で無効です。[使い方・送信内容・追加権限](docs/reply-priority.md)を確認してください。
-
-下書き保存には未対応です。`Slack Drafts`では過去の控えだけを閲覧できます。[対応状況はIssue #1](https://github.com/shinonomelon/raycast-slack-hub/issues/1)で確認できます。
+未完了の機能は公開コードから外しました。下書き、履歴・スレッド閲覧、リアクション、ブックマーク、Lists、返信待ち・AI判定は[対応予定](docs/roadmap.md)からIssueを確認できます。
 
 ## 更新・困ったとき
 
-更新は拡張のフォルダで`git pull` → `npm ci` → `npm run dev`を実行します。
+更新は拡張のフォルダで`git pull --ff-only` → `npm ci` → `npm run dev`を実行します。
 
 「送れたか未確認です」と出た場合は、Slackで届いたかを確認してから再送してください。届いていると二重投稿になります。
 
-認証エラー、保存データ、削除手順、開発用コマンドは[設定・トラブル対応](docs/reference.md)にまとめています。解決しなければ[GitHub Issues](https://github.com/shinonomelon/raycast-slack-hub/issues)に操作手順とエラーを報告してください。トークンや実際のメッセージ本文は含めないでください。
+[設定・トラブル対応](docs/reference.md)と[開発手順](docs/development.md)も参照してください。解決しなければ[GitHub Issues](https://github.com/shinonomelon/raycast-slack-hub/issues)へ操作手順とエラーを報告できます。トークンや実際のメッセージ本文は含めないでください。
