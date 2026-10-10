@@ -21,12 +21,12 @@ import { createReplyPriorityStore } from "./reply-priority-store.ts";
 import type { ApiCall } from "../../slack/slack-api.ts";
 
 const at = 800000000;
-const identity = { teamId: "T1", userId: "SELF" };
+const identity = { teamId: "T1", userId: "USELF" };
 const target = (i = 1) => ({
   ts: `${800000 - i}.000000`,
   thread_ts: `${800000 - i}.000000`,
   user: "OTHER",
-  text: "<@SELF>確認お願いします",
+  text: "<@USELF>確認お願いします",
   channel: { id: `C${i}` },
 });
 const result: AIResult = {
@@ -63,7 +63,7 @@ function fixture() {
       ? { messages: { matches: [target()] } }
       : {
           messages: [
-            { ts: params.ts, user: "OTHER", text: "<@SELF>確認お願いします" },
+            { ts: params.ts, user: "OTHER", text: "<@USELF>確認お願いします" },
           ],
           response_metadata: {},
         };
@@ -299,7 +299,9 @@ test("破損record・他scope混入・保存失敗では通常取得へ戻る", 
     now: f.clock,
   });
   await initial.begin();
-  const slot = "T1:SELF:scan:1";
+  const slot = [...f.values.keys()].find(
+    (key) => key.endsWith(":scan:1") && key.split(":").length === 6,
+  )!;
   const original = f.values.get(slot)!;
   for (const corrupted of [
     "{broken",
@@ -357,7 +359,7 @@ test("AIは入力hash・model・判定版・5分・appliedを検証し復元でA
     messages: [{ ts: candidate.anchorTs, text: "fixture", userId: "OTHER" }],
     rootTs: candidate.anchorTs,
     anchorTs: candidate.anchorTs,
-    selfId: "SELF",
+    selfId: "USELF",
     asOf: view.asOf,
     timezone: "Asia/Tokyo",
     evidenceComplete: true,
@@ -426,7 +428,7 @@ test("入力hashが同じでも期限後は再送候補、OFFから再ONの期�
   const f = fixture();
   const inputHash = "a".repeat(64);
   const entry = {
-    key: "T1:SELF:C1:799999.000000",
+    key: "T1:USELF:C1:799999.000000",
     hash: inputHash,
     result,
     scoredAt: at,
@@ -525,4 +527,141 @@ test("binding更新や保存失敗を観測したインスタンスは復元せ�
   const before = f.calls();
   await fallback.begin();
   assert.ok(f.calls() > before);
+});
+
+test("v2検索計画が改ざんされた再開データと別scopeのキャッシュを再利用しない", async () => {
+  const { scopeFingerprint } = await import("../search-scope/model.ts");
+  const f = fixture();
+  const first = openCachedReplyScan(f.cache, 1, {
+    api: f.api,
+    identity,
+    now: f.clock,
+  });
+  await first.begin();
+  const checkpoint = first.scan.checkpoint()!;
+  checkpoint.plan.push("to:me");
+  f.cache.saveScan(1, checkpoint);
+  const channelScope = {
+    channelIds: ["C1"],
+    fingerprint: scopeFingerprint(["C1"]),
+  };
+  const scoped = createReplyDecisionCache(
+    {
+      get: (key) => f.values.get(key),
+      set: (key, value) => {
+        f.values.set(key, value);
+      },
+    },
+    replyBinding(identity, "fixture-secret-token", "fixture-secret-ai-key"),
+    f.clock,
+    channelScope,
+  );
+  assert.equal(scoped.loadScan(1), undefined);
+  const { validReplyCheckpoint } = await import("./reply-priority-cache.ts");
+  assert.equal(
+    validReplyCheckpoint(
+      checkpoint,
+      replyBinding(identity, "fixture-secret-token", "fixture-secret-ai-key"),
+      1,
+      f.clock(),
+    ),
+    false,
+  );
+});
+
+test("認証変更は索引から旧アカウントの全scope本文・AI slotを実際に消去する", async () => {
+  const { scopeFingerprint } = await import("../search-scope/model.ts");
+  const f = fixture();
+  const port = {
+    get: (key: string) => f.values.get(key),
+    set: (key: string, value: string) => {
+      f.values.set(key, value);
+    },
+  };
+  const binding = replyBinding(
+    identity,
+    "fixture-secret-token",
+    "fixture-secret-ai-key",
+  );
+  for (const ids of ["all", ["C1"], ["C2"]] as const) {
+    const scope = {
+      channelIds: ids === "all" ? ("all" as const) : [...ids],
+      fingerprint: scopeFingerprint(ids),
+    };
+    const cache = createReplyDecisionCache(port, binding, f.clock, scope);
+    const scan = openCachedReplyScan(cache, 1, {
+      api: f.api,
+      identity,
+      now: f.clock,
+      scope,
+    });
+    await scan.begin();
+    cache.saveAI(1, [
+      {
+        key: "T1:USELF:C1:799999.000000",
+        hash: "a".repeat(64),
+        result,
+        scoredAt: f.clock(),
+        applied: true,
+      },
+    ]);
+  }
+  const oldSlots = [...f.values.keys()].filter(
+    (key) =>
+      key.startsWith(`T1:USELF:${binding.fingerprint}:`) &&
+      /:(scan|ai):[17]$/.test(key),
+  );
+  assert.ok(oldSlots.length >= 6);
+  assert.ok(
+    oldSlots.some((key) => f.values.get(key)!.includes("確認お願いします")),
+  );
+  createReplyDecisionCache(
+    port,
+    replyBinding(identity, "changed-token", "fixture-secret-ai-key"),
+    f.clock,
+  ).activate();
+  for (const key of oldSlots) assert.equal(f.values.get(key), "null", key);
+  assert.ok(!JSON.stringify([...f.values]).includes("確認お願いします"));
+});
+
+test("別条件の起動で期限切れ本文を消し、期限内の別条件と他アカウントを残す", async () => {
+  const { scopeFingerprint } = await import("../search-scope/model.ts");
+  const f = fixture();
+  const binding = replyBinding(
+    identity,
+    "fixture-secret-token",
+    "fixture-secret-ai-key",
+  );
+  const makeScope = (channel: string) => ({
+    channelIds: [channel],
+    fingerprint: scopeFingerprint([channel]),
+  });
+  const save = async (channel: string) => {
+    const scope = makeScope(channel);
+    const cache = createReplyDecisionCache(f.port, binding, f.clock, scope);
+    await openCachedReplyScan(cache, 1, {
+      api: f.api,
+      identity,
+      now: f.clock,
+      scope,
+    }).begin();
+    return [...f.values.keys()].find(
+      (key) => key.includes(scope.fingerprint) && key.endsWith(":scan:1"),
+    )!;
+  };
+  const expired = await save("C1");
+  f.advance(REPLY_RESULT_TTL / 2);
+  const current = await save("C2");
+  const retained = f.values.get(current);
+  const foreign = "T2:UOTHER:unrelated:scan:1";
+  f.values.set(foreign, "他アカウントの本文");
+  f.advance(REPLY_RESULT_TTL / 2 + 1);
+  const scope = makeScope("C3");
+  assert.equal(
+    createReplyDecisionCache(f.port, binding, f.clock, scope).activate(),
+    true,
+  );
+  assert.equal(f.values.get(expired), "null");
+  assert.equal(f.values.get(current), retained);
+  assert.equal(f.values.get(foreign), "他アカウントの本文");
 });

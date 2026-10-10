@@ -79,9 +79,11 @@ export function targetMessage(
   selfId: string,
   since: string,
   asOf: string,
+  senderId?: string,
 ): boolean {
   return Boolean(
     message.userId &&
+    (!senderId || message.userId === senderId) &&
     message.userId !== selfId &&
     message.userId !== "USLACKBOT" &&
     !message.bot &&
@@ -100,6 +102,7 @@ export function candidateFromMatch(
   since: string,
   asOf: string,
   knownBotIds: ReadonlySet<string> = new Set(),
+  senderId?: string,
 ): ReplyCandidate | undefined {
   const hit = normalizeMatch(raw, selfId);
   const message = rawMessage(raw);
@@ -107,7 +110,14 @@ export function candidateFromMatch(
     !hit ||
     !message ||
     (message.userId !== undefined && knownBotIds.has(message.userId)) ||
-    !targetMessage(message, hit.channelKind === "im", selfId, since, asOf)
+    !targetMessage(
+      message,
+      hit.channelKind === "im",
+      selfId,
+      since,
+      asOf,
+      senderId,
+    )
   )
     return undefined;
   const fromLink = parsePermalink(hit.permalink)?.threadTs;
@@ -162,6 +172,7 @@ export function checkReply(
   complete: boolean,
   checkedAt: number,
   since: string,
+  senderId?: string,
 ): ReplyCandidate {
   const normalDm =
     candidate.hit.channelKind === "im" && !candidate.hit.threadTs;
@@ -174,7 +185,7 @@ export function checkReply(
           m.threadTs === candidate.hit.threadTs),
   );
   const latestTarget = relevant
-    .filter((m) => targetMessage(m, normalDm, selfId, since, asOf))
+    .filter((m) => targetMessage(m, normalDm, selfId, since, asOf, senderId))
     .at(-1);
   const anchorTs =
     latestTarget && compareTs(latestTarget.ts, candidate.anchorTs) > 0
@@ -191,7 +202,7 @@ export function checkReply(
     const lastSelf = relevant.filter((m) => m.userId === selfId).at(-1)?.ts;
     const incoming = relevant.filter(
       (m) =>
-        targetMessage(m, true, selfId, since, asOf) &&
+        targetMessage(m, true, selfId, since, asOf, senderId) &&
         (!lastSelf || compareTs(m.ts, lastSelf) > 0),
     );
     firstPendingTs = incoming[0]?.ts ?? firstPendingTs;

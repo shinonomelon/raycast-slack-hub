@@ -29,3 +29,30 @@ export function writePause(kind: GateKind, pause: Pause): Pause {
   }
   return merged;
 }
+
+const accountPauses = new Map<string, Pause>();
+// アカウント内の通常検索と返信待ちで検索APIの停止期限を共有する。
+export function readAccountSearchPause(
+  account: string,
+  now = Date.now(),
+): Pause | undefined {
+  const saved = parsePause(cache.get(`account-search:${account}`), now);
+  const memory = accountPauses.get(account);
+  const pauses = [readPause("search", now), saved, memory].filter(
+    (value): value is Pause => !!value && value.until > now,
+  );
+  return pauses.reduce<Pause | undefined>(
+    (latest, value) => (latest ? mergePause(latest, value) : value),
+    undefined,
+  );
+}
+export function writeAccountSearchPause(account: string, pause: Pause): Pause {
+  const merged = mergePause(readAccountSearchPause(account), pause);
+  accountPauses.set(account, merged);
+  try {
+    cache.set(`account-search:${account}`, serializePause(merged));
+  } catch {
+    // 保存失敗でも同一プロセスでは停止期限を維持する。
+  }
+  return merged;
+}

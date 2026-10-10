@@ -125,11 +125,11 @@ export async function listJoinedChannelIds(api: ApiCall): Promise<string[]> {
   ];
 }
 export type SearchOutcome =
-  | { kind: "ok"; hits: Hit[] }
+  | { kind: "ok"; hits: Hit[]; capped?: boolean; pageCount?: number }
   | { kind: "failed"; failure: SearchFailure }
   | { kind: "aborted" };
 export type SearchPageOutcome =
-  | { kind: "ok"; hits: Hit[]; capped: boolean }
+  | { kind: "ok"; hits: Hit[]; capped: boolean; pageCount?: number }
   | { kind: "failed"; failure: SearchFailure }
   | { kind: "aborted" };
 export async function searchPage(
@@ -140,6 +140,8 @@ export async function searchPage(
     signal?: AbortSignal;
     now?: () => number;
     sortDir?: "asc" | "desc";
+    page?: number;
+    timeoutMs?: number;
   },
 ): Promise<SearchPageOutcome> {
   const { api, selfId, signal, now = Date.now } = options;
@@ -151,10 +153,10 @@ export async function searchPage(
         sort: "timestamp",
         sort_dir: options.sortDir ?? "desc",
         count: 100,
-        page: 1,
+        page: options.page ?? 1,
         highlight: false,
       },
-      { timeoutMs: SEARCH_TIMEOUT_MS, signal },
+      { timeoutMs: options.timeoutMs ?? SEARCH_TIMEOUT_MS, signal },
     );
     if (signal?.aborted) return { kind: "aborted" };
     const messages = object(data.messages);
@@ -168,7 +170,21 @@ export async function searchPage(
       typeof count === "number" && Number.isFinite(count)
         ? count
         : messages.matches.length;
-    return { kind: "ok", hits, capped: total > messages.matches.length };
+    const paging = object(messages.paging);
+    const pagination = object(messages.pagination);
+    const rawPages = paging.pages ?? pagination.page_count;
+    const pageCount =
+      typeof rawPages === "number" && Number.isInteger(rawPages) && rawPages > 0
+        ? rawPages
+        : Math.max(1, Math.ceil(total / 100));
+    return {
+      kind: "ok",
+      hits,
+      capped:
+        pageCount > (options.page ?? 1) ||
+        total > ((options.page ?? 1) - 1) * 100 + messages.matches.length,
+      pageCount,
+    };
   } catch (error) {
     if (
       signal?.aborted ||
@@ -188,7 +204,13 @@ export async function searchMessages(
   },
 ): Promise<SearchOutcome> {
   const result = await searchPage(query, options);
-  return result.kind === "ok" ? { kind: "ok", hits: result.hits } : result;
+  return result.kind === "ok"
+    ? {
+        kind: "ok",
+        hits: result.hits,
+        ...(result.capped ? { capped: true, pageCount: result.pageCount } : {}),
+      }
+    : result;
 }
 export type LastReadsOutcome =
   | { kind: "ok"; rows: LastReadRow[] }

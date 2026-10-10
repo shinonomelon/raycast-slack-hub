@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { readPause, writePause } from "./gate-store.ts";
+import {
+  readAccountSearchPause,
+  writeAccountSearchPause,
+} from "./gate-store.ts";
 import type { Hit } from "../../slack/hits.ts";
-import type { Session } from "../../slack/identity.ts";
+import { scopeKey, type Session } from "../../slack/identity.ts";
 import {
   DEBOUNCE_MS,
   decideSearch,
@@ -9,38 +12,32 @@ import {
   statusForSkipped,
   type SearchStatus,
 } from "./search-gate.ts";
-import { searchMessages } from "../../slack/slack.ts";
+import { searchPage } from "../../slack/slack.ts";
+import type { MessageSearchPlan } from "../search-scope/search-plan.ts";
+import {
+  createMessageScan,
+  messagePlanKey,
+  type MessageScanSnapshot,
+} from "./message-scan.ts";
 
 export type MessageSearch = {
-  // 結果を出した検索式。結果がまだ無い（検索していない・失敗した・止めている）ときは undefined。
-  // 画面は、これといまの検索欄の検索式を比べて、いまの検索語の結果かを見分ける
   query: string | undefined;
   hits: readonly Hit[];
-  // 直近の判断と結果（検索した・しなかった・止めている・失敗した）。検索式つき
   status: SearchStatus | undefined;
   isLoading: boolean;
-  // 同じ検索式をもう一度検索する。止めている間と、短いときは検索しない
   revalidate: () => void;
+  continueSearch: () => void;
+  planKey: string;
+  progress: MessageScanSnapshot | undefined;
 };
-
 type State = {
+  key: string;
   query?: string;
   hits: Hit[];
   status?: SearchStatus;
   searching: boolean;
+  progress?: MessageScanSnapshot;
 };
-
-// 打ち終えてから反映する
-function useDebounced<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), ms);
-    return () => clearTimeout(id);
-  }, [value, ms]);
-  return debounced;
-}
-
-// 中断されたら待たずに戻る
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (ms <= 0 || signal.aborted) return resolve();
@@ -55,100 +52,182 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
     );
   });
 }
-
-// メッセージの検索。打ち終えてから500ミリ秒待って検索し、検索どうしは最短1秒あける。
-// 新しい入力が来たら、前の検索は止めて結果を捨てる。1文字・止める期限の内側は検索しない（search-gate）。
-// 空・1文字・止めている・失敗のときも、その検索式つきの記録を残す。
-// 画面が「待っている選択」を、検索が終わるまで待つのか、捨てるのかを決められるようにするため。
-// 検索は、今回の auth.test が成功してから始める（session.canFetch）。それまでは、検索式が変わっても何もしない。
-// 自分宛ての検索に使う自分の ID は、取得する人（session.fetchAs）のもの
+// 入力そのものと範囲指紋で即時中断し、取得の開始だけをdebounceする。
 export function useMessageSearch(
   expression: string,
   session: Session,
+  plan?: MessageSearchPlan,
 ): MessageSearch {
-  const selfId = session.fetchAs?.userId;
-  const debounced = useDebounced(expression, DEBOUNCE_MS);
-  const [state, setState] = useState<State>({ hits: [], searching: false });
-  const [nonce, setNonce] = useState(0);
+  const selfId = session.canFetch ? session.fetchAs?.userId : undefined;
+  const account = scopeKey(session.display);
+  const planKey = messagePlanKey(expression, plan);
+  const inputKey = JSON.stringify([account, planKey, selfId]);
+  const [state, setState] = useState<State>({
+    key: inputKey,
+    hits: [],
+    searching: false,
+  });
+  const [request, setRequest] = useState({
+    key: inputKey,
+    nonce: 0,
+    continue: false,
+  });
   const lastStartedAt = useRef(0);
-
+  const scan = useRef<
+    { key: string; value: ReturnType<typeof createMessageScan> } | undefined
+  >(undefined);
+  const generation = useRef(0);
+  const latest = useRef({ expression, plan, inputKey });
+  latest.current = { expression, plan, inputKey };
   useEffect(() => {
-    if (selfId === undefined) return;
-    const skip = (decision: Parameters<typeof statusForSkipped>[1]) =>
-      setState({
-        hits: [],
-        status: statusForSkipped(debounced, decision),
-        searching: false,
-      });
-
-    const decision = decideSearch(debounced, readPause("search"), Date.now());
-    if (!decision.search) {
-      skip(decision);
-      return;
-    }
-
+    const id = ++generation.current;
     const controller = new AbortController();
     const { signal } = controller;
-    // 検索が終わるまで、前の結果は残す（打つたびに一覧が空にならない）
-    setState((previous) => ({ ...previous, searching: true }));
-
+    const current = latest.current;
+    // 空欄や認証待ちへ変わった場合も、前の入力の取得状態を再利用しない。
+    if (scan.current?.key !== current.inputKey) scan.current = undefined;
+    const continuing =
+      request.continue &&
+      request.key === current.inputKey &&
+      scan.current?.key === current.inputKey;
+    const valid = () =>
+      !signal.aborted &&
+      generation.current === id &&
+      latest.current.inputKey === current.inputKey;
+    if (!selfId) {
+      setState({ key: current.inputKey, hits: [], searching: false });
+      return () => controller.abort();
+    }
+    const skip = (status: SearchStatus) => {
+      if (valid())
+        setState((previous) => ({
+          ...(status.kind === "paused" && previous.key === current.inputKey
+            ? previous
+            : { key: current.inputKey, hits: [] }),
+          status,
+          searching: false,
+        }));
+    };
+    if (current.plan && !current.plan.canSearch) {
+      skip(
+        current.plan.conflicts.length
+          ? {
+              kind: "failed",
+              query: expression,
+              message: current.plan.conflicts.join("・"),
+            }
+          : { kind: "skipped", query: expression, reason: "empty" },
+      );
+      scan.current = undefined;
+      return () => controller.abort();
+    }
+    const structured =
+      current.plan &&
+      (current.plan.scope.channelIds !== "all" || current.plan.scope.senderId);
+    const gateQuery = structured ? "条件検索" : expression;
+    const decision = decideSearch(
+      gateQuery,
+      readAccountSearchPause(account),
+      Date.now(),
+    );
+    if (!decision.search && !continuing) {
+      skip(statusForSkipped(expression, decision));
+      return () => controller.abort();
+    }
+    setState((old) => ({
+      ...(old.key === current.inputKey
+        ? old
+        : { key: current.inputKey, hits: [] }),
+      searching: true,
+    }));
     void (async () => {
-      await sleep(searchDelay(lastStartedAt.current, Date.now()), signal);
-      if (signal.aborted) return;
-      // 待つ間に、止める期限ができていないか、もう一度見る
-      const again = decideSearch(debounced, readPause("search"), Date.now());
-      if (!again.search) {
-        skip(again);
-        return;
-      }
-
-      lastStartedAt.current = Date.now();
-      const outcome = await searchMessages(debounced, {
+      await sleep(
+        Math.max(DEBOUNCE_MS, searchDelay(lastStartedAt.current, Date.now())),
         signal,
-        api: session.api,
-        selfId,
-      });
-      // 新しい入力で中断したものは、結果を捨てる
-      if (signal.aborted || outcome.kind === "aborted") return;
-
-      if (outcome.kind === "ok") {
-        setState({
-          query: debounced,
-          hits: outcome.hits,
-          status: { kind: "ok", query: debounced },
-          searching: false,
-        });
-        return;
+      );
+      if (!valid()) return;
+      if (!continuing || scan.current?.key !== current.inputKey) {
+        scan.current = {
+          key: current.inputKey,
+          value: createMessageScan(expression, current.plan, {
+            search: (query, page, requestSignal, timeoutMs) =>
+              searchPage(query, {
+                signal: requestSignal,
+                api: session.api,
+                selfId,
+                page,
+                timeoutMs,
+              }),
+            readPause: () => readAccountSearchPause(account),
+            writePause: (pause) => writeAccountSearchPause(account, pause),
+          }),
+        };
       }
-      const { failure } = outcome;
-      if (failure.pause) {
-        // 時間切れ・回数制限。次の検索を止め（閉じて開き直しても止まったまま）、そのことを行に出す
-        const pause = writePause("search", failure.pause);
-        setState({
-          hits: [],
-          status: { kind: "paused", query: debounced, pause },
-          searching: false,
-        });
-        return;
-      }
+      lastStartedAt.current = Date.now();
+      const progress = await scan.current.value.run(signal);
+      if (!valid()) return;
+      const status: SearchStatus =
+        progress.pausedUntil > Date.now()
+          ? {
+              kind: "paused",
+              query: expression,
+              pause: readAccountSearchPause(account) ?? {
+                until: progress.pausedUntil,
+                cause: "rate_limited",
+              },
+            }
+          : progress.failure
+            ? {
+                kind: "failed",
+                query: expression,
+                message: progress.failure.message,
+              }
+            : { kind: "ok", query: expression };
       setState({
-        hits: [],
-        status: { kind: "failed", query: debounced, message: failure.message },
+        key: current.inputKey,
+        query: expression,
+        hits: progress.hits,
+        progress,
+        status,
         searching: false,
       });
-    })();
-
+    })().catch(() => {
+      if (valid())
+        skip({
+          kind: "failed",
+          query: expression,
+          message: "検索に失敗しました。更新して再試行してください",
+        });
+    });
     return () => controller.abort();
-    // nonce は、同じ検索式をもう一度検索するための合図。取得してよい人（selfId）が決まったら、待たせていた検索を始める
-  }, [debounced, nonce, selfId, session.api]);
-
-  const revalidate = useCallback(() => setNonce((n) => n + 1), []);
-
+  }, [expression, planKey, inputKey, request, selfId, account, session.api]);
+  const revalidate = useCallback(
+    () =>
+      setRequest((old) => ({
+        key: inputKey,
+        nonce: old.nonce + 1,
+        continue: false,
+      })),
+    [inputKey],
+  );
+  const continueSearch = useCallback(
+    () =>
+      setRequest((old) => ({
+        key: inputKey,
+        nonce: old.nonce + 1,
+        continue: true,
+      })),
+    [inputKey],
+  );
+  const current = state.key === inputKey;
   return {
-    query: state.query,
-    hits: state.hits,
-    status: state.status,
-    isLoading: state.searching,
+    query: current ? state.query : undefined,
+    hits: current ? state.hits : [],
+    status: current ? state.status : undefined,
+    isLoading: current && state.searching,
     revalidate,
+    continueSearch,
+    planKey,
+    progress: current ? state.progress : undefined,
   };
 }

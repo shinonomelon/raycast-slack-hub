@@ -23,28 +23,35 @@ export function hasFilterToken(text: string): boolean {
 // 検索欄が空か。空のときは、メッセージの検索でなく、自分宛ての整理を出す
 const isTriageText = (text: string): boolean => text.trim() === "";
 
-// 会話と組になるセクション。検索欄が空なら自分宛て、空でなければメッセージ（検索結果）
-const partnerOf = (text: string): "triage" | "messages" =>
-  isTriageText(text) ? "triage" : "messages";
+// 会話と組になるセクション。通常は空欄なら自分宛て、空でなければメッセージ（検索結果）。
+// 条件フォームでメッセージ表示を選んだときは、空欄でもメッセージを出す。
+const partnerOf = (text: string, messageMode = false): "triage" | "messages" =>
+  !messageMode && isTriageText(text) ? "triage" : "messages";
 
 // 入れ替えが無いときに先に出すもの。検索欄が空なら自分宛て、絞り込み語を打てばメッセージ、名前を打てば会話
-function defaultFirst(text: string): OrderedSection {
+function defaultFirst(text: string, messageMode = false): OrderedSection {
+  if (messageMode) return "messages";
   if (isTriageText(text)) return "triage";
   return hasFilterToken(text) ? "messages" : "conversations";
 }
 
-const other = (section: OrderedSection, text: string): OrderedSection =>
-  section === "conversations" ? partnerOf(text) : "conversations";
+const other = (
+  section: OrderedSection,
+  text: string,
+  messageMode = false,
+): OrderedSection =>
+  section === "conversations" ? partnerOf(text, messageMode) : "conversations";
 
 // 先に出すセクション。override は Shift+Tab で入れ替えたあとの順で、あればそれを使う。
 // 会話でなければ、検索欄が空かどうかで、組になるほう（自分宛て・メッセージ）に決まる
-// （古い入れ替えの印が残っていても、空欄の一覧にメッセージの検索結果が出ない）
+// （通常モードでは、古い入れ替えの印が残っていても空欄にメッセージの検索結果が出ない）
 export function firstSection(
   text: string,
   override: OrderedSection | undefined,
+  messageMode = false,
 ): OrderedSection {
-  const section = override ?? defaultFirst(text);
-  return section === "conversations" ? section : partnerOf(text);
+  const section = override ?? defaultFirst(text, messageMode);
+  return section === "conversations" ? section : partnerOf(text, messageMode);
 }
 
 // Shift+Tab を押したときの、入れ替えたあとの順。先に出ているほうを入れ替える。
@@ -52,12 +59,18 @@ export function firstSection(
 export function toggleOverride(
   text: string,
   override: OrderedSection | undefined,
+  messageMode = false,
 ): OrderedSection | undefined {
-  const swapped = other(firstSection(text, override), text);
-  return swapped === defaultFirst(text) ? undefined : swapped;
+  const swapped = other(
+    firstSection(text, override, messageMode),
+    text,
+    messageMode,
+  );
+  return swapped === defaultFirst(text, messageMode) ? undefined : swapped;
 }
 
 // 検索欄の文字が変わったあとの、入れ替えの印。
+// メッセージ表示モードでは空欄でも同じ組なので、入れ替えを保つ。以下は通常モードの判断。
 // - 検索欄が空になったら、入れ替えを解除する
 // - 空欄から文字を打ち始めたときも解除する。空欄での入れ替え（会話を先にした）は、文字のある一覧では意味が違う
 //   （そのまま持ち越すと、in: を足したのに、メッセージでなく会話が先になる）。previous は変える前の文字
@@ -67,21 +80,24 @@ export function overrideAfterTextChange(
   text: string,
   override: OrderedSection | undefined,
   previous?: string,
+  messageMode = false,
 ): OrderedSection | undefined {
+  if (messageMode) return override;
   if (isTriageText(text)) return undefined;
   if (previous !== undefined && isTriageText(previous)) return undefined;
   return override;
 }
 
 // 一覧に出すセクションの順。候補のセクション（候補と、相手が決まらない絞り込みの警告）があれば、いちばん上。
-// 検索欄が空のときは、自分宛てと会話の2つだけ（メッセージの検索結果は出さない）
+// 通常モードで検索欄が空のときは、自分宛てと会話の2つだけ。メッセージ表示モードではメッセージと会話を出す。
 export function sectionOrder(
   text: string,
   override: OrderedSection | undefined,
   hasTopSection: boolean,
+  messageMode = false,
 ): SectionName[] {
-  const first = firstSection(text, override);
-  const second = other(first, text);
+  const first = firstSection(text, override, messageMode);
+  const second = other(first, text, messageMode);
   return hasTopSection ? ["candidates", first, second] : [first, second];
 }
 
@@ -258,10 +274,13 @@ export function requestFirstRow(
   text: string,
   override: OrderedSection | undefined,
   hasCandidates: boolean,
+  messageMode = false,
 ): SelectionRequest {
   return {
     text,
-    section: hasCandidates ? "candidates" : firstSection(text, override),
+    section: hasCandidates
+      ? "candidates"
+      : firstSection(text, override, messageMode),
   };
 }
 
@@ -280,11 +299,12 @@ export function afterTextChange(
   override: OrderedSection | undefined,
   hasCandidates: boolean,
   previous?: string,
+  messageMode = false,
 ): { override: OrderedSection | undefined; request: SelectionRequest } {
-  const next = overrideAfterTextChange(text, override, previous);
+  const next = overrideAfterTextChange(text, override, previous, messageMode);
   return {
     override: next,
-    request: requestFirstRow(text, next, hasCandidates),
+    request: requestFirstRow(text, next, hasCandidates, messageMode),
   };
 }
 

@@ -3,10 +3,13 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { resolveScope } from "../search-scope/model.ts";
+import type { ChannelLibrary } from "../channel-library/model.ts";
+import type { SearchScope } from "../search-scope/model.ts";
 
 // 実際の画面を外部通信なしで動かし、Actionから送信・反映の境界を検証する。
 type Node = { type: string; props: Record<string, unknown> };
-function harness(restored = false) {
+function harness(restored = false, withScope = false) {
   const slots: unknown[] = [];
   let cursor = 0;
   let consent = false;
@@ -14,6 +17,24 @@ function harness(restored = false) {
   let scoring = 0;
   let refreshes = 0;
   let continues = 0;
+  let cancellations = 0;
+  const pushed: Node[] = [];
+  const library: ChannelLibrary = {
+    version: 1,
+    teamId: "T1",
+    userId: "U1",
+    favoriteChannelIds: ["C1"],
+    sections: [{ id: "s1", name: "第一", channelIds: ["C1"] }],
+  };
+  let mutatedLibrary = library;
+  const scopeControls = {
+    scope: { range: { kind: "favorites" } },
+    library,
+    conversations: [{ id: "C1", name: "general", type: "channel" }],
+    people: [],
+    onScopeChange: () => {},
+    onMutate: async () => mutatedLibrary,
+  };
   let resolveScore: (value: unknown) => void = () => {};
   const effects: (() => void)[] = [];
   const jsx = (type: string, props: Record<string, unknown>): Node => ({
@@ -78,7 +99,12 @@ function harness(restored = false) {
     continueScan: () => {
       continues++;
     },
-    cancelScan: () => {},
+    cancelScan: () => {
+      cancellations++;
+      source.snapshot.candidates = [];
+      source.snapshot.pendingCount = 0;
+      source.loading = false;
+    },
   };
   const api = {
     Action: Object.assign("Action", { Open: "Open" }),
@@ -93,12 +119,18 @@ function harness(restored = false) {
       Item: "Item",
       Dropdown: Object.assign("Dropdown", { Item: "DropdownItem" }),
     }),
-    useNavigation: () => ({ push: () => {} }),
+    useNavigation: () => ({ push: (node: Node) => pushed.push(node) }),
     openExtensionPreferences: () => {},
     showToast: () => {},
     Toast: { Style: { Failure: "failure" } },
   };
   const deps: Record<string, unknown> = {
+    "../search-scope/model.ts": {
+      DEFAULT_SEARCH_SCOPE: { range: { kind: "all" } },
+      resolveScope,
+    },
+    "../search-scope/scope-form.tsx": { ScopeForm: "ScopeForm" },
+    "../channel-library/section-screen.tsx": { SectionScreen: "SectionScreen" },
     "@raycast/api": api,
     react,
     "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "Fragment" },
@@ -173,6 +205,7 @@ function harness(restored = false) {
         names: { sender: () => "相手", conversationLabel: () => "DM" },
       },
       initialToken: "token",
+      ...(withScope ? { scopeControls } : {}),
     });
     rendered = true;
     while (effects.length) effects.shift()!();
@@ -197,6 +230,14 @@ function harness(restored = false) {
     action,
     nodes: () => nodes(tree),
     source,
+    pushed,
+    library,
+    mutateNext: (value: ChannelLibrary) => {
+      mutatedLibrary = value;
+    },
+    get cancellations() {
+      return cancellations;
+    },
     accept: () => {
       consent = true;
     },
@@ -258,7 +299,7 @@ test("同意後の判定は明示反映まで順位を変えず選択を維持�
   ui.accept();
   const list = ui
     .nodes()
-    .find((node) => node.props.navigationTitle === "返信待ち")!;
+    .find((node) => String(node.props.navigationTitle).startsWith("返信待ち"))!;
   (list.props.onSelectionChange as (id: string) => void)("c1");
   ui.render();
   const promise = ui.action("AIで並べる・再試行");
@@ -293,8 +334,11 @@ test("同意後の判定は明示反映まで順位を変えず選択を維持�
     "needed",
   );
   assert.equal(
-    ui.nodes().find((node) => node.props.navigationTitle === "返信待ち")!.props
-      .selectedItemId,
+    ui
+      .nodes()
+      .find((node) =>
+        String(node.props.navigationTitle).startsWith("返信待ち"),
+      )!.props.selectedItemId,
     "c1",
   );
 });
@@ -364,6 +408,15 @@ test("行のReturnはSlackを開き、cmdReturn詳細・返信・不要・延期
   });
   const exports: Record<string, (props: unknown) => Node> = {};
   const deps: Record<string, unknown> = {
+    "../search-scope/model.ts": {
+      DEFAULT_SEARCH_SCOPE: { range: { kind: "all" } },
+      resolveScope: () => ({
+        resolved: { channelIds: "all", fingerprint: "scope" },
+        unresolvedChannelIds: [],
+        missingSection: false,
+        invalidSender: false,
+      }),
+    },
     "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "Fragment" },
     "@raycast/api": {
       Action: Object.assign("Action", { Open: "Open" }),
@@ -571,4 +624,86 @@ test("複数候補と未判定が残る認証失敗を、件数表示で隠さ�
   assert.match(problem, /API Keyを確認・更新.*Slack Hubを開き直し/);
   assert.equal(problem.includes("未判定"), false);
   assert.equal(ui.nodes().filter((node) => node.type === "Row").length, 2);
+});
+
+test("同じ実効範囲の再適用は取得中・部分候補・続行を維持し、変更時だけ取り消す", () => {
+  const ui = harness(false, true);
+  ui.render();
+  ui.source.loading = true;
+  ui.render();
+  ui.action("検索条件を選ぶ");
+  const apply = ui.pushed.at(-1)!.props.onApply as (scope: SearchScope) => void;
+  apply({ range: { kind: "section", sectionId: "s1" } });
+  ui.render();
+  assert.equal(ui.cancellations, 0);
+  assert.equal(ui.source.loading, true);
+  assert.equal(ui.nodes().filter((node) => node.type === "Row").length, 1);
+  assert.equal(ui.source.snapshot.pendingCount, 1);
+  ui.source.loading = false;
+  ui.render();
+  ui.action("続きを確認");
+  assert.equal(ui.continues, 1);
+  ui.action("検索条件を選ぶ");
+  (ui.pushed.at(-1)!.props.onApply as (scope: SearchScope) => void)({
+    range: { kind: "all" },
+    senderId: "U2",
+  });
+  ui.render();
+  assert.equal(ui.cancellations, 1);
+  assert.equal(ui.nodes().filter((node) => node.type === "Row").length, 0);
+});
+
+test("返信待ちから開く管理画面はフォームから渡された最新libraryを使う", async () => {
+  const ui = harness(false, true);
+  ui.render();
+  ui.action("検索条件を選ぶ");
+  const manage = ui.pushed.at(-1)!.props.onManage as (
+    library: ChannelLibrary,
+    onChange: (library: ChannelLibrary) => void,
+  ) => void;
+  const updated = {
+    ...ui.library,
+    sections: [{ id: "new", name: "更新済み", channelIds: ["C1"] }],
+  };
+  manage(updated, () => {});
+  assert.equal(ui.pushed.at(-1)!.props.library, updated);
+});
+
+test("管理で作成した新セクションの適用も最新libraryで同一実効条件と判定して続行を残す", async () => {
+  const ui = harness(false, true);
+  ui.render();
+  ui.source.loading = true;
+  ui.render();
+  ui.action("検索条件を選ぶ");
+  const form = ui.pushed.at(-1)!;
+  const created = {
+    ...ui.library,
+    sections: [
+      ...ui.library.sections,
+      { id: "s2", name: "追加", channelIds: ["C1"] },
+    ],
+  };
+  ui.mutateNext(created);
+  (
+    form.props.onManage as (
+      library: ChannelLibrary,
+      onChange: (library: ChannelLibrary) => void,
+    ) => void
+  )(ui.library, () => {});
+  await (
+    ui.pushed.at(-1)!.props.onMutate as (mutation: unknown) => Promise<unknown>
+  )({ kind: "create-section", name: "追加" });
+  ui.render();
+  (form.props.onApply as (scope: SearchScope) => void)({
+    range: { kind: "section", sectionId: "s2" },
+  });
+  ui.render();
+  assert.equal(ui.cancellations, 0);
+  assert.equal(ui.source.loading, true);
+  assert.equal(ui.source.snapshot.pendingCount, 1);
+  assert.equal(ui.nodes().filter((node) => node.type === "Row").length, 1);
+  ui.source.loading = false;
+  ui.render();
+  ui.action("続きを確認");
+  assert.equal(ui.continues, 1);
 });

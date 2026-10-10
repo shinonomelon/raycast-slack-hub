@@ -1,6 +1,11 @@
 import { showToast, Toast } from "@raycast/api";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { readPause, writePause } from "../search/gate-store.ts";
+import {
+  readPause,
+  writePause,
+  readAccountSearchPause,
+  writeAccountSearchPause,
+} from "../search/gate-store.ts";
 import type { Hit } from "../../slack/hits.ts";
 import { scopeKey, type Identity, type Session } from "../../slack/identity.ts";
 import { readStateOf } from "./read-state.ts";
@@ -41,7 +46,7 @@ import {
 // 取得の本体は triage-fetch.ts。ここでは、保存（read-state）・止める期限（gate-store）・Slack API をつなぐ。
 // 取得は、人（ワークスペースと自分の ID）ごとに、モジュールで1つだけ動かす
 // （画面が重なって開かれても、ray develop で開いたときの処理が2回走っても、検索は重ならない）。
-// 保存は、その人の名前空間（read-state.ts）。止める期限（gate-store）は、拡張で共通
+// 保存と検索の停止期限は、その人の名前空間。既読位置の停止期限は、拡張で共通。
 const fetchersByClient = new WeakMap<ApiCall, Map<string, TriageFetchers>>();
 
 function fetchersOf(identity: Identity, api: ApiCall): TriageFetchers {
@@ -57,8 +62,14 @@ function fetchersOf(identity: Identity, api: ApiCall): TriageFetchers {
     fetchers = createTriageFetchers({
       selfId: identity.userId,
       now: Date.now,
-      readPause,
-      writePause,
+      readPause: (kind, now) =>
+        kind === "search"
+          ? readAccountSearchPause(scope, now)
+          : readPause(kind, now),
+      writePause: (kind, pause) =>
+        kind === "search"
+          ? writeAccountSearchPause(scope, pause)
+          : writePause(kind, pause),
       loadTriage: store.loadTriage,
       saveTriage: store.saveTriage,
       loadFavoriteHits: store.loadFavoriteHits,

@@ -289,3 +289,42 @@ test("履歴のSlackbot通知を再依頼として扱わず返信済み候補を
   assert.equal(checked.anchorTs, "130.000000");
   assert.equal(checked.evidence.kind, "self-post-after");
 });
+
+test("投稿者Aに絞ってもBと本人の文脈を保持し、起点をBへ動かさない", () => {
+  const original = candidateFromMatch(
+    {
+      ts: "100.000000",
+      thread_ts: "100.000000",
+      user: "UA",
+      text: "<@SELF>お願い",
+      channel: { id: "C1" },
+    },
+    "SELF",
+    "T1:SELF",
+    "0.000000",
+    "200.000000",
+  )!;
+  const messages = [
+    { ts: "100.000000", userId: "UA", text: "<@SELF>お願い" },
+    { ts: "110.000000", threadTs: "100.000000", userId: "SELF", text: "回答" },
+    {
+      ts: "120.000000",
+      threadTs: "100.000000",
+      userId: "UB",
+      text: "<@SELF>別件",
+    },
+  ];
+  const checked = checkReply(
+    original,
+    messages,
+    "SELF",
+    "200.000000",
+    true,
+    200000,
+    "0.000000",
+    "UA",
+  );
+  assert.equal(checked.anchorTs, "100.000000");
+  assert.equal(checked.messages.length, 3);
+  assert.equal(checked.evidence.kind, "self-post-after");
+});

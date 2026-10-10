@@ -1,3 +1,5 @@
+import { createReplySearchPlan } from "../search-scope/search-plan.ts";
+import { scopeFingerprint, type ResolvedScope } from "../search-scope/model.ts";
 import {
   object,
   SlackApiError,
@@ -29,7 +31,9 @@ export type ReplyScanTask = {
   unreadable?: boolean;
 };
 export type ReplyScanCheckpoint = {
-  version: 1;
+  version: 2;
+  scope: ResolvedScope;
+  plan: string[];
   scanId: string;
   days: 1 | 7;
   snapshot: ReplyScanSnapshot;
@@ -45,6 +49,9 @@ export type ReplyScanSnapshot = {
   pausedUntil: number;
   searchCapped: boolean;
   searchIncomplete: boolean;
+  omittedCount?: number;
+  displayLimitReached?: boolean;
+  failedQueries?: string[];
   calls: {
     search: number;
     history: number;
@@ -55,6 +62,7 @@ export type ReplyScanSnapshot = {
 };
 export type ReplyScanPorts = {
   api: ApiCall;
+  scope?: ResolvedScope;
   knownBotIds?: ReadonlySet<string>;
   identity: Pick<Identity, "teamId" | "userId">;
   now?: () => number;
@@ -68,16 +76,25 @@ export type ReplyScanPorts = {
 
 export function createReplyScan(ports: ReplyScanPorts) {
   const now = ports.now ?? Date.now;
+  const scope = ports.scope ?? {
+    channelIds: "all" as const,
+    fingerprint: scopeFingerprint("all"),
+  };
+  let plan: string[] = [];
   let asOf = "";
   let since = "";
   let searchCapped = false;
   let searchIncomplete = false;
+  let omittedCount = 0;
+  let displayLimitReached = false;
+  const failedQueries = new Set<string>();
   let pausedUntil = ports.loadPause?.() ?? 0;
   let started = false;
   let running = false;
   const candidates = new Map<string, ReplyCandidate>();
   const queue: ReplyScanTask[] = [];
   const searches: { query: string; page: number }[] = [];
+  const retrySearches: { query: string; page: number }[] = [];
   const calls = { search: 0, history: 0, replies: 0, auth: 0, permalink: 0 };
   let days: 1 | 7 = 1;
   let scanId: string = randomUUID();
@@ -86,33 +103,44 @@ export function createReplyScan(ports: ReplyScanPorts) {
     candidates: sortReplyCandidates([...candidates.values()]),
     asOf,
     since,
-    pendingCount: queue.length + searches.length,
+    pendingCount: queue.length + searches.length + retrySearches.length,
     pausedUntil,
     searchCapped,
     searchIncomplete,
+    omittedCount,
+    displayLimitReached,
+    failedQueries: [...failedQueries],
     calls: { ...calls },
   });
   const publish = () => {
     const view = snapshot();
     stable = structuredClone({
-      version: 1 as const,
+      version: 2 as const,
+      scope,
+      plan,
       scanId,
       days,
       snapshot: view,
       started,
       queue,
-      searches,
+      // 同じ取得操作では再試行しない失敗タスクも、再開データには含める。
+      searches: [...searches, ...retrySearches],
     });
     ports.onCheckpoint?.(structuredClone(stable));
     ports.onUpdate?.(view);
   };
   if (ports.restore) {
     const restored = structuredClone(ports.restore);
+    plan = restored.plan;
     asOf = restored.snapshot.asOf;
     since = restored.snapshot.since;
     pausedUntil = Math.max(pausedUntil, restored.snapshot.pausedUntil);
     searchCapped = restored.snapshot.searchCapped;
     searchIncomplete = restored.snapshot.searchIncomplete;
+    omittedCount = restored.snapshot.omittedCount ?? 0;
+    displayLimitReached = restored.snapshot.displayLimitReached ?? false;
+    for (const query of restored.snapshot.failedQueries ?? [])
+      failedQueries.add(query);
     days = restored.days;
     scanId = restored.scanId;
     started = restored.started;
@@ -157,16 +185,25 @@ export function createReplyScan(ports: ReplyScanPorts) {
     });
   }
   async function round() {
+    pausedUntil = Math.max(pausedUntil, ports.loadPause?.() ?? 0);
     if (running || ports.signal?.aborted || now() < pausedUntil)
       return snapshot();
     running = true;
     const deadline = now() + 60000;
     let used = 0;
+    let searchUsed = 0;
     try {
       // 検索は候補発見だけに使い、次ページを同じスキャンで続ける。
-      while (searches.length && now() < deadline && !ports.signal?.aborted) {
+      while (
+        searches.length &&
+        searchUsed < 4 &&
+        now() < deadline &&
+        !ports.signal?.aborted &&
+        now() >= pausedUntil
+      ) {
         const task = searches.shift()!;
         try {
+          searchUsed++;
           calls.search++;
           const result = await request(
             "search.messages",
@@ -183,6 +220,8 @@ export function createReplyScan(ports: ReplyScanPorts) {
             searches.unshift(task);
             break;
           }
+          failedQueries.delete(task.query);
+          searchIncomplete = failedQueries.size > 0;
           const response = object(result.messages);
           const matches = Array.isArray(response.matches)
             ? response.matches
@@ -196,20 +235,40 @@ export function createReplyScan(ports: ReplyScanPorts) {
                 since,
                 asOf,
                 ports.knownBotIds,
+                scope.senderId,
               ),
             )
             .filter((c): c is ReplyCandidate => Boolean(c));
-          for (const c of mergeCandidates([
-            ...candidates.values(),
-            ...newCandidates,
-          ]))
-            candidates.set(c.key, c);
+          for (const c of sortReplyCandidates(newCandidates)) {
+            if (
+              scope.channelIds !== "all" &&
+              !scope.channelIds.includes(c.hit.channelId)
+            )
+              continue;
+            if (!candidates.has(c.key) && candidates.size >= 400) {
+              searchCapped = true;
+              displayLimitReached = true;
+              omittedCount++;
+              continue;
+            }
+            const existing = candidates.get(c.key);
+            candidates.set(
+              c.key,
+              mergeCandidates(existing ? [existing, c] : [c])[0],
+            );
+          }
           const pages = Number(
             object(response.paging).pages ??
               object(response.pagination).page_count ??
               1,
           );
-          if (task.page < Math.min(pages, 2))
+          if (candidates.size >= 400) {
+            searchCapped = true;
+            displayLimitReached = true;
+            searches.length = 0;
+            retrySearches.length = 0;
+          }
+          if (candidates.size < 400 && task.page < Math.min(pages, 2))
             searches.push({ ...task, page: task.page + 1 });
           if (pages > 2 || (task.page === 2 && matches.length === 100))
             searchCapped = true;
@@ -219,22 +278,31 @@ export function createReplyScan(ports: ReplyScanPorts) {
             break;
           }
           searchIncomplete = true;
+          failedQueries.add(task.query);
           if (pause(error)) {
             searches.unshift(task);
             break;
           }
+          retrySearches.push(task);
         }
         publish();
       }
-      if (searches.length) return snapshot();
-      if (!queue.length && candidates.size && !started) {
+
+      searches.push(...retrySearches);
+      retrySearches.length = 0;
+      if (candidates.size) {
         for (const c of sortReplyCandidates([...candidates.values()]))
-          queue.push({
-            key: c.key,
-            kind: c.hit.threadTs ? "replies" : "root",
-            seen: [],
-            messages: [],
-          });
+          if (
+            c.evidence.kind === "unknown" &&
+            c.evidence.reason === "root" &&
+            !queue.some((t) => t.key === c.key)
+          )
+            queue.push({
+              key: c.key,
+              kind: c.hit.threadTs ? "replies" : "root",
+              seen: [],
+              messages: [],
+            });
         started = true;
         publish();
       }
@@ -335,6 +403,7 @@ export function createReplyScan(ports: ReplyScanPorts) {
                 !incomplete && readable,
                 now(),
                 since,
+                scope.senderId,
               ),
             );
             if (
@@ -380,6 +449,8 @@ export function createReplyScan(ports: ReplyScanPorts) {
       }
       return snapshot();
     } finally {
+      searches.push(...retrySearches);
+      retrySearches.length = 0;
       running = false;
       publish();
     }
@@ -393,10 +464,9 @@ export function createReplyScan(ports: ReplyScanPorts) {
     const date = new Date(at - (days + 1) * 86400000)
       .toISOString()
       .slice(0, 10);
-    searches.push(
-      { query: `<@${ports.identity.userId}> after:${date}`, page: 1 },
-      { query: `to:me after:${date}`, page: 1 },
-    );
+    const before = new Date(at + 2 * 86400000).toISOString().slice(0, 10);
+    plan = createReplySearchPlan(scope, ports.identity.userId, date, before);
+    searches.push(...plan.map((query) => ({ query, page: 1 })));
     publish();
     return round();
   }

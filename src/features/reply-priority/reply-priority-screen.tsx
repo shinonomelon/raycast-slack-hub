@@ -1,3 +1,16 @@
+import type { Conversation, Person } from "../../shared/types.ts";
+import type { ChannelLibrary } from "../channel-library/model.ts";
+import {
+  SectionScreen,
+  type LibraryMutator,
+} from "../channel-library/section-screen.tsx";
+import { ScopeForm } from "../search-scope/scope-form.tsx";
+import {
+  DEFAULT_SEARCH_SCOPE,
+  resolveScope,
+  type SearchScope,
+  type ResolvedScope,
+} from "../search-scope/model.ts";
 import {
   Action,
   ActionPanel,
@@ -95,11 +108,54 @@ type CachedAI = {
 export function ReplyPriorityScreen({
   context,
   initialToken,
+  scopeControls,
 }: {
+  scopeControls?: {
+    scope: SearchScope;
+    resolved: ResolvedScope;
+    title: string;
+    library: ChannelLibrary;
+    conversations: Conversation[];
+    people: Person[];
+    onScopeChange: (scope: SearchScope) => void;
+    onMutate: LibraryMutator;
+    scopeWarning?: string;
+  };
   context: MembershipContext;
   initialToken: string;
 }) {
   const { push } = useNavigation();
+  const [scope, setScope] = useState(
+    scopeControls?.scope ?? DEFAULT_SEARCH_SCOPE,
+  );
+  const [library, setLibrary] = useState(scopeControls?.library);
+  const libraryRef = useRef(library);
+  libraryRef.current = library;
+  const resolution = resolveScope(
+    scope,
+    library,
+    scopeControls?.conversations ?? [],
+  );
+  const resolvedScope = resolution.resolved;
+  const scopeFingerprintRef = useRef(resolvedScope.fingerprint);
+  scopeFingerprintRef.current = resolvedScope.fingerprint;
+  useEffect(() => {
+    if (scopeControls?.library) setLibrary(scopeControls.library);
+  }, [scopeControls?.library]);
+  const scopeBlocked = resolution.missingSection || resolution.invalidSender;
+  const scopeBlockedRef = useRef(scopeBlocked);
+  scopeBlockedRef.current = scopeBlocked;
+  const range = scope.range;
+  const scopeTitle =
+    range.kind === "all"
+      ? "すべて"
+      : range.kind === "favorites"
+        ? "お気に入りチャンネル"
+        : range.kind === "section"
+          ? (library?.sections.find((s) => s.id === range.sectionId)?.name ??
+            "削除されたセクション")
+          : (scopeControls?.conversations.find((c) => c.id === range.channelId)
+              ?.name ?? range.channelId);
   const [days, setDays] = useState<1 | 7>(1);
   const [showDetail, setShowDetail] = useState(false);
   const [selected, setSelected] = useState<string>();
@@ -120,20 +176,21 @@ export function ReplyPriorityScreen({
   const aiQueue = useRef<string[]>([]);
   const aiPausedUntil = useRef(0);
   const [aiMessage, setAIMessage] = useState("");
-  function stopAI(clear = false) {
+  function stopAI(clear = false, persist = true) {
     aiGeneration.current++;
     aiAbort.current?.abort();
     aiBusy.current = false;
     setAILoading(false);
     if (clear) {
       consent.current = false;
-      sourceRef.current?.saveAI(
-        [...cache.current].map(([key, value]) => ({
-          key,
-          ...value,
-          applied: false,
-        })),
-      );
+      if (persist)
+        sourceRef.current?.saveAI(
+          [...cache.current].map(([key, value]) => ({
+            key,
+            ...value,
+            applied: false,
+          })),
+        );
       cache.current.clear();
       aiQueue.current = [];
       setAIResults(new Map());
@@ -155,6 +212,8 @@ export function ReplyPriorityScreen({
     initialToken,
     () => stopAI(true),
     knownBotIds,
+    resolvedScope,
+    scopeBlocked,
   );
   const sourceRef = useRef(source);
   sourceRef.current = source;
@@ -170,14 +229,15 @@ export function ReplyPriorityScreen({
     [],
   );
   useEffect(() => {
-    stopAI();
+    stopAI(true, false);
+    setAIMessage("");
     setStaged(new Map());
     setAIResults(new Map());
     setFailures(new Set());
     const next = replyDisplayAfter({ aiApplied, filter }, "refresh");
     setAIApplied(next.aiApplied);
     setFilter(next.filter);
-  }, [days]);
+  }, [days, resolvedScope.fingerprint, scopeBlocked]);
   useEffect(() => {
     if (!source.cacheEpoch || !source.guard()) return;
     const entries = source.loadAI();
@@ -205,6 +265,8 @@ export function ReplyPriorityScreen({
   }, [source.cacheEpoch]);
   function inputOf(c: ReplyCandidate): AIInput {
     return {
+      scopeFingerprint: resolvedScope.fingerprint,
+      targetSenderId: resolvedScope.senderId,
       messages: c.messages.map((m) => ({
         ts: m.ts,
         text: m.text,
@@ -221,6 +283,7 @@ export function ReplyPriorityScreen({
     };
   }
   async function score() {
+    const scoreScope = resolvedScope.fingerprint;
     if (aiBusy.current || source.loading || !source.guard()) return;
     if (aiPausedUntil.current > Date.now()) {
       setAIMessage(
@@ -242,14 +305,19 @@ export function ReplyPriorityScreen({
       const accepted = await confirmAlert({
         title: "TypeSafeへ会話本文を送信しますか？",
         message:
-          "表示候補の本文・投稿時刻・相対化した投稿者情報をTypeSafeへ送信します。本文に含まれる個人情報は自動では除去しません。1回最大20候補です。Slackトークンは送りません。無効化で今後の送信は止まりますが、送信済み本文は取り消せません。",
+          "選択した投稿者以外の発言も会話の文脈として送ります。表示候補の本文・投稿時刻・相対化した投稿者情報をTypeSafeへ送信します。本文に含まれる個人情報は自動では除去しません。1回最大20候補です。Slackトークンは送りません。無効化で今後の送信は止まりますが、送信済み本文は取り消せません。",
         primaryAction: {
           title: "有効にして判定",
           style: Alert.ActionStyle.Default,
         },
         dismissAction: { title: "AIなしで確認" },
       });
-      if (!accepted || !source.guard()) return;
+      if (
+        !accepted ||
+        !source.guard() ||
+        scopeFingerprintRef.current !== scoreScope
+      )
+        return;
       consent.current = true;
     }
     setAIEnabled(true);
@@ -295,7 +363,9 @@ export function ReplyPriorityScreen({
         pending,
         {
           score: (input, signal) =>
-            sourceRef.current.guard() && consent.current
+            sourceRef.current.guard() &&
+            consent.current &&
+            scopeFingerprintRef.current === scoreScope
               ? scorer.score(input, signal)
               : Promise.resolve({
                   kind: "failed" as const,
@@ -471,9 +541,71 @@ export function ReplyPriorityScreen({
   visibleRef.current = visibleRows;
   const sections: ReplySection[] = aiApplied
     ? ["review", "needed", "possibly-unnecessary", "hidden"]
-    : ["review", "pending", "hidden"];
+    : ["pending", "review", "hidden"];
   const common = (
     <>
+      {scopeControls && library && (
+        <Action
+          title="検索条件を選ぶ"
+          icon={Icon.Filter}
+          onAction={() =>
+            push(
+              <ScopeForm
+                scope={scope}
+                library={library}
+                conversations={scopeControls.conversations}
+                people={scopeControls.people}
+                onApply={(next) => {
+                  const nextResolution = resolveScope(
+                    next,
+                    libraryRef.current,
+                    scopeControls.conversations,
+                  );
+                  if (
+                    nextResolution.resolved.fingerprint !==
+                      scopeFingerprintRef.current ||
+                    (nextResolution.missingSection ||
+                      nextResolution.invalidSender) !== scopeBlockedRef.current
+                  ) {
+                    source.cancelScan();
+                    stopAI(true);
+                  }
+                  setScope(next);
+                  scopeControls.onScopeChange(next);
+                }}
+                onManage={(currentLibrary, onChange) =>
+                  push(
+                    <SectionScreen
+                      library={currentLibrary}
+                      conversations={scopeControls.conversations}
+                      onMutate={async (mutation) => {
+                        const next = await scopeControls.onMutate(mutation);
+                        if (next) {
+                          libraryRef.current = next;
+                          setLibrary(next);
+                          onChange(next);
+                        }
+                        return next;
+                      }}
+                    />,
+                  )
+                }
+              />,
+            )
+          }
+        />
+      )}
+      <Action
+        title="取得状況"
+        icon={Icon.Info}
+        onAction={() =>
+          push(
+            <Detail
+              markdown={`取得済み ${source.snapshot.candidates.length}件。省略 ${source.snapshot.omittedCount ?? 0}件。未処理 ${source.snapshot.pendingCount}件。${source.snapshot.searchCapped ? "表示・ページ上限あり。範囲を狭めてください。" : ""}${source.snapshot.searchIncomplete ? "一部取得できませんでした。" : ""}\n\n検索は1回4呼び出し、100件×2ページ、候補400件を上限にします。Slackの検索ページは新着・編集で境界が動き、欠落ゼロを保証しません。`}
+            />,
+          )
+        }
+      />
       <Action
         title="Reload Reply Candidates"
         icon={Icon.ArrowClockwise}
@@ -608,8 +740,14 @@ export function ReplyPriorityScreen({
     source.snapshot.pausedUntil,
     source.store.loadPause(),
   );
+  const scopeProblem = scopeBlocked
+    ? "検索条件を選び直してください"
+    : resolution.unresolvedChannelIds.length
+      ? `${resolution.unresolvedChannelIds.length}件の参照できないチャンネルを除外しました。ディレクトリを更新してください`
+      : "";
   const problem =
-    source.invalidated || !context.session.canFetch
+    scopeProblem ||
+    (source.invalidated || !context.session.canFetch
       ? description
       : slackPausedUntil > Date.now()
         ? `Slackの回数制限。${new Date(slackPausedUntil).toLocaleTimeString("ja-JP")}以降に「続きを確認」`
@@ -619,10 +757,10 @@ export function ReplyPriorityScreen({
                 aiMessage,
               )
             ? aiMessage
-            : "";
+            : "");
   return (
     <List
-      navigationTitle="返信待ち"
+      navigationTitle={`返信待ち / ${scopeTitle}${scope.senderId ? ` / ${context.people.find((p) => p.id === scope.senderId)?.displayName ?? scope.senderId}` : ""}`}
       isLoading={source.loading || aiLoading}
       isShowingDetail={showDetail}
       selectedItemId={selected}
@@ -658,7 +796,14 @@ export function ReplyPriorityScreen({
       )}
       <List.EmptyView
         title="返信待ち候補はありません"
-        description={problem || description}
+        description={
+          scopeControls?.scopeWarning ||
+          (scopeBlocked
+            ? "検索条件を選び直してください"
+            : resolution.unresolvedChannelIds.length
+              ? `${resolution.unresolvedChannelIds.length}件の参照できないチャンネルを除外しました。ディレクトリを更新してください`
+              : problem || description)
+        }
         actions={<ActionPanel>{common}</ActionPanel>}
       />
       {sections

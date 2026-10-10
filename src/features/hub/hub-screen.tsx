@@ -2,10 +2,13 @@ import {
   Action,
   ActionPanel,
   Color,
+  Detail,
   Icon,
   Keyboard,
   List,
   openExtensionPreferences,
+  showToast,
+  Toast,
   useNavigation,
 } from "@raycast/api";
 import { useFrecencySorting } from "@raycast/utils";
@@ -19,6 +22,19 @@ import {
 } from "react";
 import { ComposeForm } from "../compose/compose-form.tsx";
 import { ReplyPriorityScreen } from "../reply-priority/reply-priority-screen.tsx";
+import { useChannelLibrary } from "../channel-library/use-channel-library.ts";
+import {
+  SectionScreen,
+  SectionMembershipForm,
+} from "../channel-library/section-screen.tsx";
+import { ScopeForm } from "../search-scope/scope-form.tsx";
+import {
+  DEFAULT_SEARCH_SCOPE,
+  resolveScope,
+  type SearchScope,
+} from "../search-scope/model.ts";
+import { createMessageSearchPlan } from "../search-scope/search-plan.ts";
+import { hubFavorites, searchScopeTitle } from "../search-scope/hub-scope.ts";
 import {
   destinationLabel,
   sendTargetOf,
@@ -280,6 +296,61 @@ function Hub({
   const joined = useDirectory(JOINED, session);
   const joinedIds = useMemo(() => new Set(joined.data ?? []), [joined.data]);
   const [prefs, updatePrefs] = usePrefs();
+  const library = useChannelLibrary({
+    identity,
+    conversations: conversations.data ?? [],
+    directoryComplete: session.canFetch && conversations.fresh,
+    legacyFavorites: prefs.favorites,
+  });
+  const migrationRequested = useRef(false);
+  useEffect(() => {
+    if (
+      session.canFetch &&
+      library.loaded &&
+      !library.ready &&
+      !library.error &&
+      !conversations.fresh &&
+      !migrationRequested.current
+    ) {
+      migrationRequested.current = true;
+      void conversations.reload();
+    }
+  }, [
+    session.canFetch,
+    library.loaded,
+    library.ready,
+    library.error,
+    conversations.fresh,
+    conversations.reload,
+  ]);
+  const [searchScope, setSearchScope] =
+    useState<SearchScope>(DEFAULT_SEARCH_SCOPE);
+  const [messageMode, setMessageMode] = useState(false);
+  const scopeResolution = useMemo(
+    () => resolveScope(searchScope, library.library, conversations.data ?? []),
+    [searchScope, library.library, conversations.data],
+  );
+  const scopeTitle = searchScopeTitle(
+    searchScope,
+    library.library,
+    conversations.data ?? [],
+    people.data ?? [],
+  );
+  const scopeWarning = scopeResolution.missingSection
+    ? "選択したセクションは削除されています。検索条件を選び直してください"
+    : scopeResolution.unresolvedChannelIds.length
+      ? `参照できないチャンネル${scopeResolution.unresolvedChannelIds.length}件を除外しています。ディレクトリを更新してください`
+      : undefined;
+  const favoriteValues = useMemo(
+    () =>
+      hubFavorites(
+        prefs.favorites,
+        library.library,
+        library.ready,
+        conversations.data ?? [],
+      ),
+    [prefs.favorites, library.library, library.ready, conversations.data],
+  );
   const membership = prefs.membership;
   const setMembership = (next: Membership) => {
     if (next !== membership) updatePrefs((p) => ({ ...p, membership: next }));
@@ -291,18 +362,18 @@ function Hub({
     () => toItems(conversations.data ?? [], listed, prefs, selfHandleList),
     [conversations.data, listed, prefs, selfHandleList],
   );
-  const favorites = useMemo(() => new Set(prefs.favorites), [prefs.favorites]);
+  const favorites = useMemo(() => new Set(favoriteValues), [favoriteValues]);
   // 未読を数えるお気に入り：チャンネル・非公開チャンネル・グループDM。人は含めない（人の未読は、自分宛ての DM で数える）。
   // 一覧にまだ無いもの（読み込み前・削除済み）も含めない。ID の並びが同じなら同じ配列を使う（取り直しのきっかけにしない）
   const favoriteKey = useMemo(() => {
     const kinds = new Map(items.map((item) => [item.id, item.kind]));
-    return prefs.favorites
+    return favoriteValues
       .filter((id) => {
         const kind = kinds.get(id);
         return kind !== undefined && kind !== "person";
       })
       .join(",");
-  }, [items, prefs.favorites]);
+  }, [items, favoriteValues]);
   const favoriteIds = useMemo(
     () => (favoriteKey ? favoriteKey.split(",") : []),
     [favoriteKey],
@@ -330,7 +401,17 @@ function Hub({
       // 参加中の絞り込みで残す人（未読の DM がある人）は、開いたときの未読で決める。裏の更新で人の行が消えないように
       triage.openUnread,
     );
-    return rankItems(filtered, conversationQuery(searchText));
+    const ids = scopeResolution.resolved.channelIds;
+    return rankItems(
+      ids === "all"
+        ? filtered
+        : filtered.filter(
+            (item) =>
+              (item.kind === "channel" || item.kind === "private") &&
+              ids.includes(item.id),
+          ),
+      conversationQuery(searchText),
+    );
   }, [
     sorted,
     favorites,
@@ -340,6 +421,7 @@ function Hub({
     joinedIds,
     triage.openUnread,
     searchText,
+    scopeResolution.resolved.fingerprint,
   ]);
 
   // 検索欄の解釈。絞り込みの候補の元は、お気に入り → 最近開いた順に並べて渡す
@@ -365,7 +447,23 @@ function Hub({
     () => resolveQuery(searchText, sources, identity.userId),
     [searchText, sources, identity.userId],
   );
-  const search = useMessageSearch(resolved.query, session);
+  const messagePlan = useMemo(
+    () =>
+      createMessageSearchPlan({
+        text: searchText,
+        scope: scopeResolution.resolved,
+        sources,
+        selfId: identity.userId,
+      }),
+    [
+      searchText,
+      scopeResolution.resolved.fingerprint,
+      sources,
+      identity.userId,
+    ],
+  );
+  const activePlan = messageMode || searchText.trim() ? messagePlan : undefined;
+  const search = useMessageSearch(resolved.query, session, activePlan);
   // 条件を変えた直後は前の検索結果が残るため、現在の検索式に一致する行だけを表示する。
   const messageHits =
     session.canFetch && search.query === resolved.query ? search.hits : [];
@@ -378,7 +476,7 @@ function Hub({
 
   // セクションの順。候補（と、相手が決まらない絞り込みの警告）は、あればいちばん上
   const hasTopSection = candidates.length > 0 || resolved.unresolved.length > 0;
-  const order = sectionOrder(searchText, override, hasTopSection);
+  const order = sectionOrder(searchText, override, hasTopSection, messageMode);
   // 操作の直後に1回だけ、先頭の行を選ぶ。対象のセクションが、いまの検索語の結果になってから選び、
   // 使い終えたら予約を捨てる。裏の取り直しや並べ替えでは選び直さない（選択が動くと、↵ や ⌘↵ が別の行に効くため）
   const selection = decideSelection(request, {
@@ -414,6 +512,7 @@ function Hub({
       override,
       hasCandidatesFor(text),
       searchText,
+      messageMode,
     );
     setSearchText(text);
     setOverride(next.override);
@@ -433,9 +532,11 @@ function Hub({
 
   // Shift+Tab：会話とメッセージ（検索欄が空なら自分宛て）の順を入れ替え、先に出るほうの先頭の行を選ぶ
   const swapOrder = () => {
-    const next = toggleOverride(searchText, override);
+    const next = toggleOverride(searchText, override, messageMode);
     setOverride(next);
-    setRequest(requestFirstRow(searchText, next, candidates.length > 0));
+    setRequest(
+      requestFirstRow(searchText, next, candidates.length > 0, messageMode),
+    );
   };
 
   // 会話と人の一覧をすべて取り直す
@@ -499,7 +600,76 @@ function Hub({
   const actionsIn = (order: readonly CommonAction[]) =>
     order.map((name) => commonAction[name]);
   // 行に固有の操作があるときは、その操作のあとに置く
-  const commonActions = actionsIn(COMMON_ACTIONS);
+  const openScope = () => {
+    if (!session.canFetch || !library.ready) {
+      void showToast({
+        style: Toast.Style.Failure,
+        title: "検索条件をまだ開けません",
+        message:
+          library.error ||
+          "チャンネル一覧の取得完了を待つか、一覧を更新してください",
+      });
+      return;
+    }
+    push(
+      <ScopeForm
+        scope={searchScope}
+        library={library.library}
+        conversations={conversations.data ?? []}
+        people={people.data ?? []}
+        onApply={(scope, options) => {
+          setSearchScope(scope);
+          const nextMessageMode = !!options.showMessages;
+          setMessageMode(nextMessageMode);
+          setOverride(undefined);
+          setRequest(
+            requestFirstRow(
+              searchText,
+              undefined,
+              candidates.length > 0,
+              nextMessageMode,
+            ),
+          );
+        }}
+        onManage={(currentLibrary, onChange) =>
+          push(
+            <SectionScreen
+              library={currentLibrary}
+              conversations={conversations.data ?? []}
+              onMutate={async (mutation) => {
+                const next = await library.mutate(mutation);
+                if (next) onChange(next);
+                return next;
+              }}
+            />,
+          )
+        }
+      />,
+    );
+  };
+  const scopeAction = (
+    <Action
+      key="search-scope"
+      title="検索条件を選ぶ"
+      icon={Icon.Filter}
+      onAction={openScope}
+    />
+  );
+  const continueAction = search.progress?.pendingCount ? (
+    <Action
+      key="continue-search"
+      title="続きを取得"
+      icon={Icon.ArrowDown}
+      onAction={() => {
+        if (!search.isLoading) search.continueSearch();
+      }}
+    />
+  ) : null;
+  const commonActions = [
+    ...actionsIn(COMMON_ACTIONS),
+    scopeAction,
+    continueAction,
+  ];
 
   // 詳細を持たない候補・状態の行では、主操作の次に閉じる操作を置く。
   const hideDetails = showDetail ? (
@@ -537,13 +707,26 @@ function Hub({
     />
   );
 
-  const toggleFavorite = (id: string) =>
+  const toggleFavorite = (id: string) => {
+    const channel = conversations.data?.find(
+      (c) => c.id === id && c.type !== "mpim",
+    );
+    if (channel) {
+      if (!session.canFetch || !library.ready) return;
+      void library.mutate({
+        kind: "favorite",
+        channelId: id,
+        favorite: !library.library.favoriteChannelIds.includes(id),
+      });
+      return;
+    }
     updatePrefs((p) => ({
       ...p,
       favorites: p.favorites.includes(id)
         ? p.favorites.filter((f) => f !== id)
         : [...p.favorites, id],
     }));
+  };
 
   const setAliases = (id: string, aliases: string[]) =>
     updatePrefs((p) => {
@@ -566,7 +749,7 @@ function Hub({
     kind: Parameters<typeof standaloneActions>[0],
   ) => {
     const [primary, ...rest] = actionsIn(standaloneActions(kind));
-    return [primary, hideDetails, ...rest];
+    return [primary, hideDetails, ...rest, scopeAction, continueAction];
   };
   const statusRow = searchStatusRow(
     search.status,
@@ -584,6 +767,7 @@ function Hub({
         triage.isLoading ||
         checking
       }
+      navigationTitle={`Slack Hub · ${scopeTitle}`}
       filtering={false}
       searchText={searchText}
       onSearchTextChange={changeSearchText}
@@ -600,6 +784,17 @@ function Hub({
                 <ReplyPriorityScreen
                   context={membershipContext}
                   initialToken={initialToken}
+                  scopeControls={{
+                    scope: searchScope,
+                    resolved: scopeResolution.resolved,
+                    title: scopeTitle,
+                    library: library.library,
+                    conversations: conversations.data ?? [],
+                    people: people.data ?? [],
+                    onScopeChange: setSearchScope,
+                    onMutate: library.mutate,
+                    scopeWarning,
+                  }}
                 />,
               );
             } else setMembership(value as Membership);
@@ -645,6 +840,28 @@ function Hub({
           />
         </List.Section>
       ) : null}
+      {[library.error, scopeWarning, ...(activePlan?.conflicts ?? [])]
+        .filter(Boolean)
+        .map((warning, index) => (
+          <List.Item
+            key={`scope-warning-${index}`}
+            id={`scope-warning-${index}`}
+            title={warning!}
+            icon={Icon.Warning}
+            actions={
+              <ActionPanel>
+                {scopeAction}
+                <Action
+                  title="チャンネル一覧と整理データを更新"
+                  onAction={async () => {
+                    await conversations.reload();
+                    await library.reload();
+                  }}
+                />
+              </ActionPanel>
+            }
+          />
+        ))}
       {order.map((section) => {
         // 行が1つも無いセクションは出さない（見出しだけが残らないように）
         if (section === "candidates") {
@@ -827,6 +1044,43 @@ function Hub({
                           shortcut={Keyboard.Shortcut.Common.Pin}
                           onAction={() => toggleFavorite(item.id)}
                         />
+                        {session.canFetch &&
+                        library.ready &&
+                        (item.kind === "channel" || item.kind === "private") ? (
+                          <>
+                            <Action
+                              title="このチャンネルでメッセージを検索"
+                              icon={Icon.MagnifyingGlass}
+                              onAction={() => {
+                                setSearchScope({
+                                  ...searchScope,
+                                  range: {
+                                    kind: "channel",
+                                    channelId: item.id,
+                                  },
+                                });
+                                setMessageMode(true);
+                                setSearchText("");
+                                setOverride(undefined);
+                                setRequest(
+                                  requestFirstRow("", undefined, false, true),
+                                );
+                              }}
+                            />
+                            <Action.Push
+                              title="セクションへの所属"
+                              icon={Icon.Folder}
+                              target={
+                                <SectionMembershipForm
+                                  channelId={item.id}
+                                  library={library.library}
+                                  channelName={item.title}
+                                  onMutate={library.mutate}
+                                />
+                              }
+                            />
+                          </>
+                        ) : null}
                         <Action.Push
                           title="Edit Aliases"
                           icon={Icon.Pencil}
@@ -876,7 +1130,12 @@ function Hub({
         }
         // 自分宛て：開いたときの判定で未読・スレッド・判定できないもの（新しい順）。検索欄が空のときだけ出る
         if (section === "triage") {
-          if (triage.rows.length === 0) return null;
+          if (
+            triage.rows.length === 0 ||
+            searchScope.range.kind !== "all" ||
+            searchScope.senderId
+          )
+            return null;
           return (
             <List.Section
               key="triage"
@@ -890,20 +1149,57 @@ function Hub({
           );
         }
         // メッセージ：検索結果（新しい順）。止まっている・失敗したときは、そのことを行に出す
-        if (!statusRow && messageHits.length === 0) return null;
+        if (!statusRow && messageHits.length === 0 && !search.progress?.partial)
+          return null;
         return (
           <List.Section
             key="messages"
             title="メッセージ"
             subtitle={
               messageHits.length > 0
-                ? [filterLabels, `${messageHits.length} 件`]
+                ? [
+                    filterLabels,
+                    `${search.progress?.partial ? "取得済み" : ""}${messageHits.length} 件`,
+                  ]
                     .filter(Boolean)
                     .join(" · ")
                 : undefined
             }
           >
             {statusRow}
+            {search.progress?.partial ? (
+              <List.Item
+                id="scope-search-progress"
+                title={
+                  search.progress.capped
+                    ? "検索上限に達しました。範囲を狭めてください"
+                    : search.progress.failedQueries.length
+                      ? "一部の検索に失敗しました"
+                      : "取得途中"
+                }
+                subtitle={`${search.progress.completedSearches}/${search.progress.totalSearches} 検索対象${search.progress.omittedCount ? ` · ${search.progress.omittedCount} 件省略` : ""}`}
+                icon={Icon.Info}
+                actions={
+                  <ActionPanel>
+                    <Action.Push
+                      title="取得状況"
+                      target={
+                        <Detail
+                          markdown={`取得済み ${messageHits.length} 件。${search.progress.omittedCount ? `保存上限で ${search.progress.omittedCount} 件を省略しました。` : ""}
+
+各検索は最大2ページ、全体で最大400件を保存します。取得済みの結果を新しい順に並べています。全範囲の最新400件を保証するものではありません。
+
+取得中の新着・編集・検索インデックスの変更でページ境界が動くため、重複を除いても一部の投稿を取得できない場合があります。必要なら範囲を狭めて先頭から更新してください。`}
+                        />
+                      }
+                    />
+                    {continueAction}
+                    {scopeAction}
+                    <Action title="先頭から更新" onAction={search.revalidate} />
+                  </ActionPanel>
+                }
+              />
+            ) : null}
             {messageHits.map((hit) =>
               // 検索結果は既読位置を取らない。印が付いているものだけ、対応済みと出す
               messageRow(

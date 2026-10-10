@@ -1146,3 +1146,33 @@ test("空欄から打ち始めたり、空欄の行で Tab を押したりした
     section: "conversations",
   });
 });
+
+test("メッセージ表示モードは空欄でもメッセージ優先で、入れ替えと先頭選択が両方向で一致する", () => {
+  for (const text of ["", "請求", "in:#a 請求"]) {
+    let override: OrderedSection | undefined;
+    for (const expected of ["messages", "conversations", "messages"] as const) {
+      assert.deepEqual(sectionOrder(text, override, false, true), [
+        expected,
+        expected === "messages" ? "conversations" : "messages",
+      ]);
+      assert.equal(
+        requestFirstRow(text, override, false, true).section,
+        expected,
+      );
+      assert.equal(sectionOrder(text, override, true, true)[0], "candidates");
+      assert.equal(
+        requestFirstRow(text, override, true, true).section,
+        "candidates",
+      );
+      override = toggleOverride(text, override, true);
+    }
+    const changed = afterTextChange(
+      "請求書",
+      "conversations",
+      false,
+      text,
+      true,
+    );
+    assert.equal(changed.request.section, "conversations");
+  }
+});

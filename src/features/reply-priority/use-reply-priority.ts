@@ -1,3 +1,8 @@
+import {
+  readAccountSearchPause,
+  writeAccountSearchPause,
+} from "../search/gate-store.ts";
+import { scopeFingerprint, type ResolvedScope } from "../search-scope/model.ts";
 import { Cache } from "@raycast/api";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readSettings, readReplyAISettings } from "../../shared/settings.ts";
@@ -35,7 +40,15 @@ export function useReplyPriority(
   token: string,
   onInvalidate: () => void,
   knownBotIds?: ReadonlySet<string>,
+  resolvedScope: ResolvedScope = {
+    channelIds: "all",
+    fingerprint: scopeFingerprint("all"),
+  },
+  scopeBlocked = false,
 ) {
+  const currentScope = useRef(resolvedScope.fingerprint);
+  currentScope.current = resolvedScope.fingerprint;
+  const snapshotScope = useRef(resolvedScope.fingerprint);
   const [aiKey] = useState(() => readReplyAISettings().typesafeApiKey);
   const [snapshot, setSnapshot] = useState(empty);
   const [loading, setLoading] = useState(false);
@@ -66,8 +79,16 @@ export function useReplyPriority(
           token,
           aiKey,
         ),
+        Date.now,
+        resolvedScope,
       ),
-    [session.display.teamId, session.display.userId, token, aiKey],
+    [
+      session.display.teamId,
+      session.display.userId,
+      token,
+      aiKey,
+      resolvedScope.fingerprint,
+    ],
   );
   const credentialGate = useMemo(
     () =>
@@ -94,8 +115,19 @@ export function useReplyPriority(
     [token, aiKey, decisionCache],
   );
   const guard = useCallback(() => {
-    return credentialGate.check() && alive.current && session.canFetch;
-  }, [session.canFetch, credentialGate]);
+    return (
+      credentialGate.check() &&
+      alive.current &&
+      session.canFetch &&
+      !scopeBlocked &&
+      currentScope.current === resolvedScope.fingerprint
+    );
+  }, [
+    session.canFetch,
+    credentialGate,
+    scopeBlocked,
+    resolvedScope.fingerprint,
+  ]);
   // フォームを開いた後も、投稿を含む各API呼び出しの直前に設定変更を確認する。
   const api: ApiCall = useCallback(
     async (method, params, options) => {
@@ -120,6 +152,7 @@ export function useReplyPriority(
         id = ++generation.current;
         controller.current = new AbortController();
         setSnapshot(empty());
+        snapshotScope.current = resolvedScope.fingerprint;
         const opened = openCachedReplyScan(
           decisionCache,
           days,
@@ -127,9 +160,20 @@ export function useReplyPriority(
             api,
             identity: session.display,
             knownBotIds,
+            scope: resolvedScope,
             signal: controller.current.signal,
-            loadPause: store.loadPause,
-            savePause: store.savePause,
+            loadPause: () =>
+              Math.max(
+                store.loadPause(),
+                readAccountSearchPause(scopeKey(session.display))?.until ?? 0,
+              ),
+            savePause: (until) => {
+              store.savePause(until);
+              writeAccountSearchPause(scopeKey(session.display), {
+                until,
+                cause: "rate_limited",
+              });
+            },
             onUpdate: (next) => {
               if (guard() && generation.current === id) setSnapshot(next);
             },
@@ -168,10 +212,16 @@ export function useReplyPriority(
       controller.current?.abort();
       clearInterval(interval);
     };
-  }, [days, session.canFetch, store, guard]);
+  }, [days, session.canFetch, store, guard, resolvedScope.fingerprint]);
   return {
-    snapshot,
-    loading,
+    snapshot:
+      !scopeBlocked && snapshotScope.current === resolvedScope.fingerprint
+        ? snapshot
+        : empty(),
+    loading:
+      !scopeBlocked &&
+      snapshotScope.current === resolvedScope.fingerprint &&
+      loading,
     invalidated,
     fromCache,
     cacheEpoch,
@@ -207,6 +257,6 @@ export function useReplyPriority(
           }
         : undefined;
     },
-    current: () => scan.current?.snapshot(),
+    current: () => (guard() ? scan.current?.snapshot() : undefined),
   };
 }

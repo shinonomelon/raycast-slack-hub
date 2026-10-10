@@ -117,6 +117,8 @@ export async function refreshIfStale<T>(
 export function useDirectory<T>(dir: Directory<T>, session: Session) {
   const [entry, setEntry] = useState(() => read<T>(session.display, dir.key));
   const [isLoading, setIsLoading] = useState(false);
+  // この画面で全ページを取得したことを示す。古いキャッシュだけでは移行を確定しない。
+  const [fresh, setFresh] = useState(false);
   // 取得中に再読み込みを押されても Slack API を重ねて動かさず、実行中の取得を待つ
   const inFlight = useRef<Promise<void>>(undefined);
 
@@ -129,6 +131,7 @@ export function useDirectory<T>(dir: Directory<T>, session: Session) {
     inFlight.current = (async () => {
       try {
         setEntry(await fetchAndStore(dir, fetchAs, session.api));
+        setFresh(true);
       } catch (error) {
         await showToast({
           style: Toast.Style.Failure,
@@ -152,5 +155,5 @@ export function useDirectory<T>(dir: Directory<T>, session: Session) {
     // 開いたときと、今回の auth.test が成功したときに判定する
   }, [session.canFetch]);
 
-  return { data: entry?.data, isLoading, reload };
+  return { data: entry?.data, isLoading, fresh, reload };
 }

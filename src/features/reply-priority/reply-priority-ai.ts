@@ -19,6 +19,8 @@ export type AIInput = {
   timezone: string;
   evidenceComplete: boolean;
   fileOnly?: boolean;
+  scopeFingerprint?: string;
+  targetSenderId?: string;
 };
 export type AIResult = {
   neededProbability: number;
@@ -231,6 +233,12 @@ export function prepareAIInput(input: AIInput) {
     asOfLocal: localTimestamp(input.asOf),
     timezone: input.timezone.slice(0, 128),
     self: "self",
+    searchScopeFingerprint: input.scopeFingerprint ?? null,
+    targetAuthor: input.targetSenderId
+      ? (aliases.get(input.targetSenderId) ?? "other")
+      : null,
+    targetOrigin:
+      "anchorTs identifies the request; other authors are conversation context",
     rootTs: input.rootTs.slice(0, 128),
     anchorTs: input.anchorTs.slice(0, 128),
     evidenceComplete: input.evidenceComplete,

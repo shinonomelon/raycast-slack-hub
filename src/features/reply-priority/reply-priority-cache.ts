@@ -1,3 +1,5 @@
+import { createReplySearchPlan } from "../search-scope/search-plan.ts";
+import { scopeFingerprint, type ResolvedScope } from "../search-scope/model.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   AI_PROMPT_VERSION,
@@ -87,10 +89,14 @@ export function validReplyCheckpoint(
   binding: ReplyBinding,
   period: 1 | 7,
   now: number,
+  resolvedScope: ResolvedScope = {
+    channelIds: "all",
+    fingerprint: scopeFingerprint("all"),
+  },
 ): value is ReplyScanCheckpoint {
   if (
     !obj(value) ||
-    value.version !== 1 ||
+    value.version !== 2 ||
     value.days !== period ||
     !text(value.scanId) ||
     !/^[a-f0-9-]{36}$/.test(value.scanId) ||
@@ -98,6 +104,15 @@ export function validReplyCheckpoint(
     !obj(value.snapshot) ||
     !Array.isArray(value.queue) ||
     !Array.isArray(value.searches)
+  )
+    return false;
+  if (
+    !obj(value.scope) ||
+    value.scope.fingerprint !== resolvedScope.fingerprint ||
+    JSON.stringify(value.scope.channelIds) !==
+      JSON.stringify(resolvedScope.channelIds) ||
+    value.scope.senderId !== resolvedScope.senderId ||
+    !Array.isArray(value.plan)
   )
     return false;
   const s = value.snapshot;
@@ -114,6 +129,12 @@ export function validReplyCheckpoint(
     s.pausedUntil < 0 ||
     typeof s.searchCapped !== "boolean" ||
     typeof s.searchIncomplete !== "boolean" ||
+    (s.omittedCount !== undefined &&
+      (!Number.isSafeInteger(s.omittedCount) || Number(s.omittedCount) < 0)) ||
+    (s.displayLimitReached !== undefined &&
+      typeof s.displayLimitReached !== "boolean") ||
+    (s.failedQueries !== undefined &&
+      (!Array.isArray(s.failedQueries) || !s.failedQueries.every(text))) ||
     !validCalls(s.calls)
   )
     return false;
@@ -127,6 +148,10 @@ export function validReplyCheckpoint(
       keys.has(c.key) ||
       !obj(c.hit) ||
       !id(c.hit.channelId) ||
+      (resolvedScope.channelIds !== "all" &&
+        !resolvedScope.channelIds.includes(c.hit.channelId)) ||
+      (resolvedScope.senderId !== undefined &&
+        c.hit.userId !== resolvedScope.senderId) ||
       !ts(c.hit.ts) ||
       !text(c.hit.text) ||
       !text(c.hit.key) ||
@@ -191,14 +216,21 @@ export function validReplyCheckpoint(
     )
   )
     return false;
+  const at = Number(s.asOf) * 1000;
+  const expected = createReplySearchPlan(
+    resolvedScope,
+    binding.userId,
+    new Date(at - (period + 1) * 86400000).toISOString().slice(0, 10),
+    new Date(at + 2 * 86400000).toISOString().slice(0, 10),
+  );
+  if (JSON.stringify(value.plan) !== JSON.stringify(expected)) return false;
   if (
-    value.searches.length > 4 ||
+    value.searches.length > expected.length ||
     !value.searches.every(
       (q) =>
         obj(q) &&
         text(q.query) &&
-        (q.query.startsWith(`<@${binding.userId}> after:`) ||
-          q.query.startsWith("to:me after:")) &&
+        expected.includes(q.query) &&
         (q.page === 1 || q.page === 2),
     )
   )
@@ -210,6 +242,10 @@ export function createReplyDecisionCache(
   port: ReplyCachePort,
   binding: ReplyBinding,
   clock: () => number = Date.now,
+  resolvedScope: ResolvedScope = {
+    channelIds: "all",
+    fingerprint: scopeFingerprint("all"),
+  },
 ) {
   let failed = false;
   let epoch: string | undefined;
@@ -217,7 +253,8 @@ export function createReplyDecisionCache(
     b: Pick<ReplyBinding, "teamId" | "userId">,
     kind: string,
     days: 1 | 7,
-  ) => `${scope(b)}:${kind}:${days}`;
+  ) =>
+    `${scope(b)}:${binding.fingerprint}:${resolvedScope.fingerprint}:${kind}:${days}`;
   const read = (k: string): unknown => {
     let raw: string | undefined;
     try {
@@ -232,8 +269,28 @@ export function createReplyDecisionCache(
       return undefined;
     }
   };
+  const indexKey = (b: Pick<ReplyBinding, "teamId" | "userId">) =>
+    `${scope(b)}:slots-v2`;
   const write = (k: string, value: unknown) => {
     try {
+      // 本文を書き込む前に実slotを索引へ記録し、認証変更時に全範囲を消去する。
+      if (/:(scan|ai):[17]$/.test(k)) {
+        const account = k.split(":").slice(0, 2).join(":");
+        const slotIndex = `${account}:slots-v2`;
+        const indexed: unknown = JSON.parse(port.get(slotIndex) ?? "[]");
+        if (
+          !Array.isArray(indexed) ||
+          !indexed.every(
+            (slot) =>
+              typeof slot === "string" &&
+              slot.startsWith(`${account}:`) &&
+              /:(scan|ai):[17]$/.test(slot),
+          )
+        )
+          throw new Error("キャッシュ索引が不正です");
+        if (!indexed.includes(k))
+          port.set(slotIndex, JSON.stringify([...indexed, k]));
+      }
       port.set(k, JSON.stringify(value));
       return true;
     } catch {
@@ -249,9 +306,25 @@ export function createReplyDecisionCache(
     }
   };
   const clearScope = (b: Pick<ReplyBinding, "teamId" | "userId">) => {
+    const indexed = read(indexKey(b));
+    if (
+      indexed !== null &&
+      (!Array.isArray(indexed) ||
+        !indexed.every(
+          (slot) =>
+            text(slot) &&
+            slot.startsWith(`${scope(b)}:`) &&
+            /:(scan|ai):[17]$/.test(slot),
+        ))
+    ) {
+      failed = true;
+      return;
+    }
+    for (const slot of (indexed ?? []) as string[]) write(slot, null);
+    // 初版の固定slotも破棄し、旧形式の本文とAI結果を残さない。
     for (const period of [1, 7] as const) {
-      write(key(b, "scan", period), null);
-      write(key(b, "ai", period), null);
+      write(`${scope(b)}:scan:${period}`, null);
+      write(`${scope(b)}:ai:${period}`, null);
     }
   };
   function activate() {
@@ -283,6 +356,34 @@ export function createReplyDecisionCache(
       write("active-binding", { ...binding, epoch });
     }
     if (failed) return false;
+    // 条件を切り替えても、同じアカウントの期限切れ本文を残さない。
+    const indexed = read(indexKey(binding));
+    if (
+      indexed !== null &&
+      (!Array.isArray(indexed) ||
+        !indexed.every(
+          (slot) =>
+            text(slot) &&
+            slot.startsWith(`${scope(binding)}:`) &&
+            /:(scan|ai):[17]$/.test(slot),
+        ))
+    ) {
+      failed = true;
+      return false;
+    }
+    for (const slot of (indexed ?? []) as string[]) {
+      if (!/:scan:[17]$/.test(slot)) continue;
+      const record = read(slot);
+      if (!record) continue;
+      if (
+        !recordMatches(record) ||
+        !obj(record.checkpoint) ||
+        !obj(record.checkpoint.snapshot) ||
+        !ts(record.checkpoint.snapshot.asOf) ||
+        !fresh(Number(record.checkpoint.snapshot.asOf) * 1000, clock())
+      )
+        write(slot, null);
+    }
     // 読み込み時に両期間の期限切れ原文を消す。非起動中の自動消去は行わない。
     for (const period of [1, 7] as const) {
       const slot = key(binding, "scan", period);
@@ -295,6 +396,7 @@ export function createReplyDecisionCache(
             binding,
             period,
             clock(),
+            resolvedScope,
           ))
       )
         write(slot, null);
@@ -303,7 +405,7 @@ export function createReplyDecisionCache(
   }
   const recordMatches = (v: unknown): v is JsonObject =>
     obj(v) &&
-    v.version === 1 &&
+    v.version === 2 &&
     v.teamId === binding.teamId &&
     v.userId === binding.userId &&
     v.fingerprint === binding.fingerprint &&
@@ -317,7 +419,13 @@ export function createReplyDecisionCache(
     if (failed) return undefined;
     if (
       !recordMatches(value) ||
-      !validReplyCheckpoint(value.checkpoint, binding, period, clock())
+      !validReplyCheckpoint(
+        value.checkpoint,
+        binding,
+        period,
+        clock(),
+        resolvedScope,
+      )
     ) {
       write(k, null);
       return undefined;
@@ -327,10 +435,10 @@ export function createReplyDecisionCache(
   function saveScan(period: 1 | 7, checkpoint: ReplyScanCheckpoint) {
     if (
       activate() &&
-      validReplyCheckpoint(checkpoint, binding, period, clock())
+      validReplyCheckpoint(checkpoint, binding, period, clock(), resolvedScope)
     )
       write(key(binding, "scan", period), {
-        version: 1,
+        version: 2,
         ...binding,
         epoch,
         model: JEV_MODEL,
@@ -366,7 +474,7 @@ export function createReplyDecisionCache(
   function saveAI(period: 1 | 7, entries: readonly PersistentReplyAI[]) {
     if (!activate()) return;
     write(key(binding, "ai", period), {
-      version: 1,
+      version: 2,
       ...binding,
       epoch,
       model: JEV_MODEL,
