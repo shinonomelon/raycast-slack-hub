@@ -167,3 +167,17 @@ test("Retry-Afterの秒数だけ停止し、認証の失敗では停止期限を
     assert.equal(rejected.pause, undefined);
   }
 });
+
+test("未送信の待機はAPIの再開時刻を保ち、timeoutの30秒停止と分ける", () => {
+  const error = new SlackApiError("deferred", "wait", 900);
+  error.retryAt = NOW + 12345;
+  for (const classify of [classifySearchFailure, classifyLastReadFailure]) {
+    const failure = classify(error, NOW);
+    assert.equal(failure.kind, "rate_limited");
+    assert.deepEqual(failure.pause, { until: NOW + 12345, cause: "deferred" });
+    assert.deepEqual(
+      parsePause(serializePause(failure.pause!), NOW),
+      failure.pause,
+    );
+  }
+});

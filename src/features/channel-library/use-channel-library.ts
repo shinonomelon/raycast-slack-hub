@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import { environment } from "@raycast/api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Conversation } from "../../shared/types.ts";
@@ -9,7 +10,6 @@ import {
   type LibraryMutation,
 } from "./model.ts";
 import { createChannelLibraryStore } from "./store.ts";
-
 const store = createChannelLibraryStore(environment.supportPath);
 export function useChannelLibrary({
   identity,
@@ -72,7 +72,7 @@ export function useChannelLibrary({
           error:
             error instanceof Error
               ? error.message
-              : "整理データを保存できませんでした。再試行してください",
+              : t("整理データを保存できませんでした。再試行してください"),
         }));
     }
   }, []);
@@ -112,7 +112,7 @@ export function useChannelLibrary({
             error:
               error instanceof Error
                 ? error.message
-                : "整理データを保存できませんでした。再試行してください",
+                : t("整理データを保存できませんでした。再試行してください"),
           }));
         return false;
       }

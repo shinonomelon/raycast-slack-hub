@@ -17,8 +17,11 @@ Slackアプリに許可する操作をスコープと呼びます。使うAPIご
 | メッセージ検索、自分宛て                 | `search.messages`                                | `search:read`                                                                          |
 | 既読位置                                 | `conversations.info`                             | `channels:read`・`groups:read`・`im:read`・`mpim:read`（会話の種類による）             |
 | 投稿、スレッド返信                       | `chat.postMessage`                               | `chat:write`                                                                           |
+| 詳細でのスレッドの過去投稿               | `conversations.replies`                          | `channels:history`・`groups:history`・`im:history`・`mpim:history`（会話の種類による） |
 | 返信待ちの会話・スレッド確認             | `conversations.history`・`conversations.replies` | `im:history`・`channels:history`・`groups:history`・`mpim:history`（会話の種類による） |
 | 人へのDMの開始                           | `conversations.open`                             | `im:write`                                                                             |
+
+通常のメッセージ検索には履歴権限は不要です。詳細で過去のスレッド投稿を読む場合に追加してください。
 
 スコープを追加したらアプリを再インストールし、トークンが変わった場合はRaycastの設定も更新します。メールアドレスを取得しないので`users:read.email`は不要です。
 
@@ -36,7 +39,7 @@ Cacheと保存ファイルは`~/Library/Application Support/com.raycast.macos/ex
 
 返信待ちでは候補本文・履歴確認・続きの取得位置・AI結果を5分保存します。除外・延期の印は14日で破棄します。期限切れは読み込み時に削除します。期間や認証設定が変わった場合は以前の結果を使いません。[返信待ちの使い方](reply-priority.md)も参照してください。
 
-人の参加チャンネルとチャンネル参加者はメモリ内で2分間再利用します。認証クライアントと本人ごとに分け、完全に取得した結果だけを保存します。Refreshでは再利用せず取り直します。
+人の参加チャンネルとチャンネル参加者はメモリ内で2分間再利用します。認証クライアントと本人ごとに分け、完全に取得した結果だけを保存します。「更新」では再利用せず取り直します。
 
 投稿本文はメモリ内でMarkdownからBlock Kitと通知用textへ変換します。投稿用の一時ファイルや外部プロセスは使いません。旧版のCLI設定・鍵・一時ファイルは自動削除しません。
 
@@ -57,11 +60,32 @@ npm run dev
 
 削除する場合はRaycastの設定→ExtensionsでSlack Hubをアンインストールします。ソースのフォルダも削除できます。拡張の保存フォルダが残っている場合、削除すると設定・Cacheと旧版の保存データが消えます。トークンを失効させる場合は[Slackのアプリ管理画面](https://api.slack.com/apps)でアプリのトークンを取り消すか、不要なアプリを削除します。
 
+## 背景更新の頻度を選ぶ
+
+Raycastの設定 → Extensions → Slack Hub → `Background refresh frequency / 背景更新の頻度`で選びます。
+
+| 設定 | 動作 |
+|---|---|
+| 30分 | 初期設定。チャンネルと参加状況を30分間隔で更新する |
+| 1時間 | チャンネルと参加状況を1時間間隔で更新する |
+| 3時間 | チャンネルと参加状況を3時間間隔で更新する |
+| オフ | 背景では認証も取得も行わない。手動更新と初回取得は使える |
+
+メンバー一覧は24時間経過した時に更新します。自分宛て・返信待ち・メッセージ詳細のキャッシュ期限は、この設定では変わりません。設定変更は次の背景起動で読み直します。OSや省電力の影響で起動が遅れることがあります。
+
+更新不要な起動ではSlackに通信しません。一覧の取得途中で停止した場合は、成功済みのページと続きの位置を最大24時間だけ保存します。完成するまで以前の一覧を表示します。Slackが続きの位置を無効にした場合は取り直します。
+
+## 回数制限中の動作
+
+APIごとに送信間隔を空け、429を受けた場合は`Retry-After`まで画面と背景更新の両方で停止します。停止していない別のAPIは利用できます。待機中も保存済みの結果は表示し、未取得の候補は確認済みとして扱いません。投稿は自動再試行しません。
+
+履歴・スレッド取得は、初期設定でそれぞれ毎分1回に抑えます。使用するSlackアプリが内部利用またはSlack Marketplace承認済みの区分に該当すると確認できた場合に限り、`Slack API distribution`の確認済み設定を選べます。Raycast Storeへの掲載だけでは、この区分は変わりません。[Slackの公式説明](https://docs.slack.dev/reference/methods/conversations.replies/)を確認してください。
+
 ## 困ったとき
 
 - **トークン未設定／認証失敗**：Slack Access Tokenに自分のUser OAuth Tokenを入力し、Slack Hubを開き直します。`invalid_auth`・`not_authed`・`token_revoked`・`token_expired`・`account_inactive`ならトークンやアカウントの状態を確認します。以前の結果があれば保存済みの一覧を表示しますが、認証が成功するまで新しい取得と投稿は止めます。
 - **`missing_scope`**：表示された必要な権限をUser Token Scopesに追加し、アプリを再インストールします。トークンが変わった場合はRaycastの設定も更新します。
-- **回数制限／検索の時間切れ**：表示された待機期間の後にActionsのReload Searchで取り直します。429応答ではRetry-Afterを使い、そのAPIメソッドへの問い合わせを止めます。投稿は自動再試行しません。
+- **回数制限／検索の時間切れ**：表示された待機期間の後にActionsの検索を更新で取り直します。429応答ではRetry-Afterを使い、そのAPIメソッドへの問い合わせを止めます。投稿は自動再試行しません。
 - **「送れたか未確認です」**：投稿が届いている可能性があります。トーストのOpen Conversation／Open Parent MessageでSlackを開き、届いたかを確認してください。再送すると同じ投稿が二重になることがあります。
 - **既読の位置が分からない**：Slackの応答に`last_read`がない会話は既読不明として扱います。取得失敗を未読ゼロとして表示しません。
 

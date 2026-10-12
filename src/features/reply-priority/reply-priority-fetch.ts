@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import { createReplySearchPlan } from "../search-scope/search-plan.ts";
 import { scopeFingerprint, type ResolvedScope } from "../search-scope/model.ts";
 import {
@@ -21,7 +22,6 @@ import {
   type ReplyCandidate,
   type ReplyEvidence,
 } from "./reply-priority.ts";
-
 export type ReplyScanTask = {
   key: string;
   kind: "root" | "history" | "replies";
@@ -39,7 +39,10 @@ export type ReplyScanCheckpoint = {
   snapshot: ReplyScanSnapshot;
   started: boolean;
   queue: ReplyScanTask[];
-  searches: { query: string; page: number }[];
+  searches: {
+    query: string;
+    page: number;
+  }[];
 };
 export type ReplyScanSnapshot = {
   candidates: ReplyCandidate[];
@@ -68,12 +71,11 @@ export type ReplyScanPorts = {
   now?: () => number;
   signal?: AbortSignal;
   loadPause?: () => number;
-  savePause?: (until: number) => void;
+  savePause?: (until: number, method?: ApiMethod) => void;
   onUpdate?: (snapshot: ReplyScanSnapshot) => void;
   onCheckpoint?: (checkpoint: ReplyScanCheckpoint) => void;
   restore?: ReplyScanCheckpoint;
 };
-
 export function createReplyScan(ports: ReplyScanPorts) {
   const now = ports.now ?? Date.now;
   const scope = ports.scope ?? {
@@ -93,8 +95,14 @@ export function createReplyScan(ports: ReplyScanPorts) {
   let running = false;
   const candidates = new Map<string, ReplyCandidate>();
   const queue: ReplyScanTask[] = [];
-  const searches: { query: string; page: number }[] = [];
-  const retrySearches: { query: string; page: number }[] = [];
+  const searches: {
+    query: string;
+    page: number;
+  }[] = [];
+  const retrySearches: {
+    query: string;
+    page: number;
+  }[] = [];
   const calls = { search: 0, history: 0, replies: 0, auth: 0, permalink: 0 };
   let days: 1 | 7 = 1;
   let scanId: string = randomUUID();
@@ -153,7 +161,12 @@ export function createReplyScan(ports: ReplyScanPorts) {
   }
   function unknown(
     key: string,
-    reason: Extract<ReplyEvidence, { kind: "unknown" }>["reason"],
+    reason: Extract<
+      ReplyEvidence,
+      {
+        kind: "unknown";
+      }
+    >["reason"],
   ) {
     const c = candidates.get(key);
     if (c)
@@ -163,10 +176,16 @@ export function createReplyScan(ports: ReplyScanPorts) {
         contextIncomplete: true,
       });
   }
-  function pause(error: unknown): boolean {
-    if (error instanceof SlackApiError && error.kind === "rate_limited") {
-      pausedUntil = now() + (error.retryAfter ?? 60) * 1000;
-      ports.savePause?.(pausedUntil);
+  function pause(error: unknown, method: ApiMethod): boolean {
+    if (
+      error instanceof SlackApiError &&
+      (error.kind === "rate_limited" || error.kind === "deferred")
+    ) {
+      pausedUntil = Math.max(
+        pausedUntil,
+        error.retryAt ?? now() + (error.retryAfter ?? 60) * 1000,
+      );
+      ports.savePause?.(pausedUntil, method);
       return true;
     }
     return false;
@@ -178,10 +197,12 @@ export function createReplyScan(ports: ReplyScanPorts) {
   ) {
     const remaining = deadline - now();
     if (remaining <= 0)
-      throw new SlackApiError("timeout", "取得予算の時間切れです");
+      throw new SlackApiError("timeout", t("取得予算の時間切れです"));
     return ports.api(method, params, {
       signal: ports.signal,
       timeoutMs: Math.min(15000, remaining),
+      deadlineAt: deadline,
+      source: "reply-priority",
     });
   }
   async function round() {
@@ -279,7 +300,7 @@ export function createReplyScan(ports: ReplyScanPorts) {
           }
           searchIncomplete = true;
           failedQueries.add(task.query);
-          if (pause(error)) {
+          if (pause(error, "search.messages")) {
             searches.unshift(task);
             break;
           }
@@ -287,7 +308,6 @@ export function createReplyScan(ports: ReplyScanPorts) {
         }
         publish();
       }
-
       searches.push(...retrySearches);
       retrySearches.length = 0;
       if (candidates.size) {
@@ -426,8 +446,13 @@ export function createReplyScan(ports: ReplyScanPorts) {
             queue.unshift(task);
             break;
           }
-          if (pause(error)) {
-            unknown(task.key, "rate");
+          if (pause(error, method)) {
+            unknown(
+              task.key,
+              error instanceof SlackApiError && error.kind === "deferred"
+                ? "budget"
+                : "rate",
+            );
             queue.unshift(task);
             break;
           }
@@ -456,7 +481,7 @@ export function createReplyScan(ports: ReplyScanPorts) {
     }
   }
   async function start(period: 1 | 7 = 1) {
-    if (asOf) throw new Error("スキャンは一度だけ開始できます");
+    if (asOf) throw new Error(t("スキャンは一度だけ開始できます"));
     days = period;
     const at = now();
     asOf = slackTs(at);

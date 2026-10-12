@@ -1,6 +1,6 @@
 import type { ApiCall } from "./slack-api.ts";
 import { apiForToken } from "./slack-api-runner.ts";
-import { Cache } from "@raycast/api";
+import { Cache, environment, getPreferenceValues } from "@raycast/api";
 import { useEffect, useMemo, useState } from "react";
 import {
   decideFetch,
@@ -51,7 +51,14 @@ export type IdentityState = IdentityView & {
 export function useIdentity(): IdentityState {
   // 設定は、開いたときに1回読む（auth.test と、そのあとの取得が、同じ設定で動くように）
   const [settings] = useState(readSettings);
-  const api = useMemo(() => apiForToken(settings.accessToken), [settings]);
+  const api = useMemo(
+    () =>
+      apiForToken(settings.accessToken, {
+        supportPath: environment.supportPath,
+        preferences: () => getPreferenceValues<Record<string, unknown>>(),
+      }),
+    [settings],
+  );
   const key = useMemo(() => identityCacheKey(settings), [settings]);
   const [previous] = useState(() => loadPrevious(key));
   const [outcome, setOutcome] = useState<IdentityOutcome>();

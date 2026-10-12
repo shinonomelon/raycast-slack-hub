@@ -13,23 +13,85 @@
     {
       "name": "accessToken",
       "title": "Slack Access Token",
-      "description": "自分のUser OAuth Token（xoxp-）を設定してください。取得手順はREADMEを参照してください。",
+      "description": "Set your User OAuth Token (xoxp-). See README for setup. 自分のUser OAuth Token（xoxp-）を設定してください。取得手順はREADMEを参照してください。",
       "type": "password",
       "required": true
     },
     {
       "name": "previousHandles",
       "title": "Previous Handles",
-      "description": "Slack のハンドルを変えたことがある人だけ。前のハンドルをカンマ区切りで",
+      "description": "Previous handles, separated by commas, if you changed your Slack handle. ハンドルを変えたことがある人だけ、以前の名前をカンマ区切りで入力してください。",
       "type": "textfield",
       "required": false
     },
     {
       "name": "typesafeApiKey",
       "title": "TypeSafe API Key (Optional)",
-      "description": "返信待ちをAIで並べる場合だけ設定します。本文をTypeSafeへ送る前に画面で確認します。",
+      "description": "Optional: sort reply candidates with AI. Confirmation is required before sending text to TypeSafe. 任意設定です。本文をTypeSafeへ送る前に画面で確認します。",
       "type": "password",
       "required": false
+    },
+    {
+      "name": "language",
+      "title": "Language / 言語",
+      "description": "Choose the display language, then reopen Slack Hub. 表示言語を選び、Slack Hubを開き直してください。",
+      "type": "dropdown",
+      "required": true,
+      "default": "ja",
+      "data": [
+        {
+          "title": "日本語",
+          "value": "ja"
+        },
+        {
+          "title": "English",
+          "value": "en"
+        }
+      ]
+    },
+    {
+      "name": "backgroundRefreshFrequency",
+      "title": "Background refresh frequency / 背景更新の頻度",
+      "description": "Channels follow this interval; people refresh every 24 hours. チャンネルはこの間隔、メンバーは24時間ごとに更新します。",
+      "type": "dropdown",
+      "required": false,
+      "default": "30m",
+      "data": [
+        {
+          "title": "30 minutes / 30分",
+          "value": "30m"
+        },
+        {
+          "title": "1 hour / 1時間",
+          "value": "1h"
+        },
+        {
+          "title": "3 hours / 3時間",
+          "value": "3h"
+        },
+        {
+          "title": "Off / オフ",
+          "value": "off"
+        }
+      ]
+    },
+    {
+      "name": "slackApiDistribution",
+      "title": "Slack API distribution",
+      "description": "Select verified only after confirming your app is internal or Marketplace approved. 内部利用またはMarketplace承認済みと確認した場合だけ切り替えてください。",
+      "type": "dropdown",
+      "required": false,
+      "default": "conservative",
+      "data": [
+        {
+          "title": "Unknown / 未確認 (60 seconds)",
+          "value": "conservative"
+        },
+        {
+          "title": "Verified internal / Marketplace (1.3 seconds)",
+          "value": "verified-internal"
+        }
+      ]
     }
   ],
   "commands": [
@@ -47,9 +109,9 @@
     {
       "name": "refresh-directory",
       "title": "Refresh Slack Directory",
-      "description": "Refresh the cached Slack channels, people, and joined channels every 5 minutes when they are stale.",
+      "description": "Refresh cached Slack directories according to the configured background frequency.",
       "mode": "no-view",
-      "interval": "5m"
+      "interval": "30m"
     }
   ],
   "dependencies": {

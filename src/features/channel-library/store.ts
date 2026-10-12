@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import {
   existsSync,
   mkdirSync,
@@ -21,7 +22,6 @@ import {
   type LibraryIdentity,
   type LibraryMutation,
 } from "./model.ts";
-
 export class LibraryStoreError extends Error {
   readonly code: "locked" | "recovery" | "corrupt";
   constructor(code: "locked" | "recovery" | "corrupt", message: string) {
@@ -35,7 +35,10 @@ export type SaveStage =
   "before-write" | "after-write" | "before-rename" | "after-rename";
 export function createChannelLibraryStore(
   supportPath: string,
-  options: { maxBytes?: number; checkpoint?: (stage: SaveStage) => void } = {},
+  options: {
+    maxBytes?: number;
+    checkpoint?: (stage: SaveStage) => void;
+  } = {},
 ) {
   const path = join(supportPath, "channel-library.json");
   const lock = `${path}.lock`;
@@ -44,7 +47,9 @@ export function createChannelLibraryStore(
     try {
       if (statSync(path).size > limit)
         throw new Error(
-          "整理ファイルがサイズ上限を超えています。復旧してから再読み込みしてください",
+          t(
+            "整理ファイルがサイズ上限を超えています。復旧してから再読み込みしてください",
+          ),
         );
       return parseLibraryDocument(JSON.parse(readFileSync(path, "utf8")));
     } catch (error) {
@@ -52,7 +57,7 @@ export function createChannelLibraryStore(
         return { version: 1, accounts: {}, legacyClaims: {} };
       throw new LibraryStoreError(
         "corrupt",
-        "整理ファイルを読めません。正本を復旧してから再読み込みしてください",
+        t("整理ファイルを読めません。正本を復旧してから再読み込みしてください"),
       );
     }
   }
@@ -60,12 +65,14 @@ export function createChannelLibraryStore(
   const locked = () =>
     new LibraryStoreError(
       "locked",
-      "別の画面またはプロセスが保存中です。再試行してください",
+      t("別の画面またはプロセスが保存中です。再試行してください"),
     );
   const unsafe = () =>
     new LibraryStoreError(
       "recovery",
-      "保存ロックの所有者を確認できません。整理ファイルを保護したままロックを復旧してください",
+      t(
+        "保存ロックの所有者を確認できません。整理ファイルを保護したままロックを復旧してください",
+      ),
     );
   function owner() {
     try {
@@ -77,7 +84,10 @@ export function createChannelLibraryStore(
         !value.nonce
       )
         throw unsafe();
-      return value as { pid: number; nonce: string };
+      return value as {
+        pid: number;
+        nonce: string;
+      };
     } catch {
       throw unsafe();
     }
@@ -150,7 +160,7 @@ export function createChannelLibraryStore(
       const serialized = JSON.stringify(document, null, 2);
       if (Buffer.byteLength(serialized) > limit)
         throw new Error(
-          "整理データがサイズ上限を超えています。保存内容を減らしてください",
+          t("整理データがサイズ上限を超えています。保存内容を減らしてください"),
         );
       temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
       options.checkpoint?.("before-write");
@@ -176,7 +186,10 @@ export function createChannelLibraryStore(
   return {
     load: async (
       identity: LibraryIdentity,
-    ): Promise<{ library: ChannelLibrary; ready: boolean }> => {
+    ): Promise<{
+      library: ChannelLibrary;
+      ready: boolean;
+    }> => {
       const document = read();
       return {
         library: account(document, identity),
@@ -188,7 +201,10 @@ export function createChannelLibraryStore(
       conversations: readonly Conversation[],
       directoryComplete: boolean,
       legacyFavorites: readonly string[],
-    ): Promise<{ library: ChannelLibrary; ready: boolean }> => {
+    ): Promise<{
+      library: ChannelLibrary;
+      ready: boolean;
+    }> => {
       const document = await transaction((latest) =>
         initializeLibrary(
           latest,
@@ -211,7 +227,7 @@ export function createChannelLibraryStore(
       const document = await transaction((latest) => {
         if (!Object.hasOwn(latest.accounts, key))
           throw new Error(
-            "ディレクトリ取得完了後に整理データを初期化してください",
+            t("ディレクトリ取得完了後に整理データを初期化してください"),
           );
         latest.accounts[key] = applyLibraryMutation(
           latest.accounts[key],

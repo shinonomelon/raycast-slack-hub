@@ -206,3 +206,81 @@ test("トークン別のクライアントを共有し、後から作った別�
     `Bearer ${TOKEN}`,
   ]);
 });
+test("API待機完了と中断が競合しても読取・投稿を送信しない", async () => {
+  for (const method of ["search.messages", "chat.postMessage"] as ApiMethod[]) {
+    const controller = new AbortController();
+    let calls = 0;
+    const api = createSlackApi(
+      TOKEN,
+      async () => {
+        calls++;
+        return json({ ok: true });
+      },
+      {
+        policy: {
+          async beforeSend() {
+            controller.abort();
+            return 0;
+          },
+          async pause() {
+            return 0;
+          },
+        },
+      },
+    );
+    await assert.rejects(
+      api(method, {}, { signal: controller.signal, dedupe: false }),
+      isKind("aborted"),
+    );
+    assert.equal(calls, 0);
+  }
+});
+test("読取の共有購読者が待機完了時に中断したら未送信通信を止める", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const api = createSlackApi(
+    TOKEN,
+    async () => {
+      calls++;
+      return json({ ok: true });
+    },
+    {
+      policy: {
+        async beforeSend() {
+          controller.abort();
+          return 0;
+        },
+        async pause() {
+          return 0;
+        },
+      },
+    },
+  );
+  await assert.rejects(
+    api("search.messages", {}, { signal: controller.signal }),
+    isKind("aborted"),
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls, 0);
+});
+test("パラメータの組み立て中に中断されても読取・投稿を送信しない", async () => {
+  for (const method of ["search.messages", "chat.postMessage"] as ApiMethod[]) {
+    const controller = new AbortController();
+    let calls = 0;
+    const params = {
+      get text() {
+        controller.abort();
+        return "text";
+      },
+    };
+    const api = createSlackApi(TOKEN, async () => {
+      calls++;
+      return json({ ok: true });
+    });
+    await assert.rejects(
+      api(method, params, { signal: controller.signal, dedupe: false }),
+      isKind("aborted"),
+    );
+    assert.equal(calls, 0);
+  }
+});

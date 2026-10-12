@@ -15,15 +15,33 @@ import {
 const cache = new Cache({ namespace: "search-gate" });
 
 // いま止めている期限。種類ごとに別々（検索と既読位置の取得は、Slack の API の種類が違い、回数制限も別に数えられる）
-export function readPause(kind: GateKind, now = Date.now()): Pause | undefined {
-  return parsePause(cache.get(kind), now);
+export function readPause(
+  kind: GateKind,
+  now = Date.now(),
+  account?: string,
+): Pause | undefined {
+  const scoped = parsePause(
+    cache.get(account ? `${kind}:${account}` : kind),
+    now,
+  );
+  if (!account) return scoped;
+  const legacy = parsePause(cache.get(kind), now);
+  return legacy && legacy.cause !== "deferred"
+    ? scoped
+      ? mergePause(legacy, scoped)
+      : legacy
+    : scoped;
 }
 
 // 止める期限を書く。すでにあるより前にはしない。保存できなくても、検索は止めたものとして続ける
-export function writePause(kind: GateKind, pause: Pause): Pause {
-  const merged = mergePause(readPause(kind), pause);
+export function writePause(
+  kind: GateKind,
+  pause: Pause,
+  account?: string,
+): Pause {
+  const merged = mergePause(readPause(kind, Date.now(), account), pause);
   try {
-    cache.set(kind, serializePause(merged));
+    cache.set(account ? `${kind}:${account}` : kind, serializePause(merged));
   } catch {
     // 保存できなかっただけで、この回の画面は止まる。次に開いたときは、止めずに検索する
   }
@@ -38,9 +56,13 @@ export function readAccountSearchPause(
 ): Pause | undefined {
   const saved = parsePause(cache.get(`account-search:${account}`), now);
   const memory = accountPauses.get(account);
-  const pauses = [readPause("search", now), saved, memory].filter(
-    (value): value is Pause => !!value && value.until > now,
-  );
+  const pauses = [
+    readPause("search", now)?.cause === "deferred"
+      ? undefined
+      : readPause("search", now),
+    saved,
+    memory,
+  ].filter((value): value is Pause => !!value && value.until > now);
   return pauses.reduce<Pause | undefined>(
     (latest, value) => (latest ? mergePause(latest, value) : value),
     undefined,

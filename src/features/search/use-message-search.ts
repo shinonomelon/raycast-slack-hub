@@ -1,3 +1,5 @@
+import { getApiCredentialKey } from "../../slack/request-context.ts";
+import { t } from "../../shared/i18n.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   readAccountSearchPause,
@@ -19,7 +21,6 @@ import {
   messagePlanKey,
   type MessageScanSnapshot,
 } from "./message-scan.ts";
-
 export type MessageSearch = {
   query: string | undefined;
   hits: readonly Hit[];
@@ -59,7 +60,7 @@ export function useMessageSearch(
   plan?: MessageSearchPlan,
 ): MessageSearch {
   const selfId = session.canFetch ? session.fetchAs?.userId : undefined;
-  const account = scopeKey(session.display);
+  const account = getApiCredentialKey(session.api) ?? scopeKey(session.display);
   const planKey = messagePlanKey(expression, plan);
   const inputKey = JSON.stringify([account, planKey, selfId]);
   const [state, setState] = useState<State>({
@@ -74,7 +75,11 @@ export function useMessageSearch(
   });
   const lastStartedAt = useRef(0);
   const scan = useRef<
-    { key: string; value: ReturnType<typeof createMessageScan> } | undefined
+    | {
+        key: string;
+        value: ReturnType<typeof createMessageScan>;
+      }
+    | undefined
   >(undefined);
   const generation = useRef(0);
   const latest = useRef({ expression, plan, inputKey });
@@ -124,7 +129,7 @@ export function useMessageSearch(
     const structured =
       current.plan &&
       (current.plan.scope.channelIds !== "all" || current.plan.scope.senderId);
-    const gateQuery = structured ? "条件検索" : expression;
+    const gateQuery = structured ? t("条件検索") : expression;
     const decision = decideSearch(
       gateQuery,
       readAccountSearchPause(account),
@@ -157,6 +162,8 @@ export function useMessageSearch(
                 selfId,
                 page,
                 timeoutMs,
+                source: "search",
+                deadlineAt: Date.now() + timeoutMs,
               }),
             readPause: () => readAccountSearchPause(account),
             writePause: (pause) => writeAccountSearchPause(account, pause),
@@ -196,7 +203,7 @@ export function useMessageSearch(
         skip({
           kind: "failed",
           query: expression,
-          message: "検索に失敗しました。更新して再試行してください",
+          message: t("検索に失敗しました。更新して再試行してください"),
         });
     });
     return () => controller.abort();

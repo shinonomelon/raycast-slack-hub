@@ -1,3 +1,4 @@
+import * as i18n from "../../shared/i18n.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -94,31 +95,33 @@ function harness(parent: "hub" | "reply-priority") {
     {
       exports: formExports,
       require: (id: string) =>
-        ({
-          "react/jsx-runtime": { jsx, jsxs: jsx },
-          "@raycast/api": {
-            Action: "Action",
-            ActionPanel: "ActionPanel",
-            Form: Object.assign("Form", {
-              Dropdown: Object.assign("Dropdown", { Item: "Item" }),
-              Description: "Description",
-            }),
-            useNavigation: () => ({ pop: () => {} }),
-          },
-          react: {
-            useState: (initialValue: unknown) => {
-              const index = cursor++;
-              if (!(index in slots)) slots[index] = initialValue;
-              return [
-                slots[index],
-                (value: unknown) => {
-                  slots[index] = value;
+        id.endsWith("/i18n.ts")
+          ? i18n
+          : {
+              "react/jsx-runtime": { jsx, jsxs: jsx },
+              "@raycast/api": {
+                Action: "Action",
+                ActionPanel: "ActionPanel",
+                Form: Object.assign("Form", {
+                  Dropdown: Object.assign("Dropdown", { Item: "Item" }),
+                  Description: "Description",
+                }),
+                useNavigation: () => ({ pop: () => {} }),
+              },
+              react: {
+                useState: (initialValue: unknown) => {
+                  const index = cursor++;
+                  if (!(index in slots)) slots[index] = initialValue;
+                  return [
+                    slots[index],
+                    (value: unknown) => {
+                      slots[index] = value;
+                    },
+                  ];
                 },
-              ];
-            },
-          },
-          "./model.ts": { DEFAULT_SEARCH_SCOPE, validateScopeSelection },
-        })[id],
+              },
+              "./model.ts": { DEFAULT_SEARCH_SCOPE, validateScopeSelection },
+            }[id],
     },
   );
   function nodes(value: unknown): Node[] {
@@ -127,6 +130,7 @@ function harness(parent: "hub" | "reply-priority") {
     const node = value as Node;
     return [node, ...Object.values(node.props).flatMap(nodes)];
   }
+  let lastForm: Node;
   function open() {
     cursor = 0;
     const tree = formExports.ScopeForm!({
@@ -137,14 +141,16 @@ function harness(parent: "hub" | "reply-priority") {
       onApply: () => {},
       onManage: exports.manage,
     });
+    lastForm = tree;
     const action = nodes(tree).find(
-      (node) => node.props.title === "セクションを管理",
+      (node) => node.props.title === i18n.t("セクションを管理"),
     )!;
     (action.props.onAction as () => void)();
     return pushed.at(-1)!;
   }
   return {
     open,
+    formNodes: () => nodes(lastForm),
     update: async (section: ChannelLibrary["sections"][number]) => {
       next = { ...current, sections: [section] };
       await (
@@ -169,3 +175,32 @@ for (const parent of ["hub", "reply-priority"] as const) {
     assert.equal(ui.open().props.library, renamed);
   });
 }
+
+test("英語の検索条件フォームは項目・操作を英語にし、管理後の利用者のセクション名は保持する", async () => {
+  try {
+    i18n.setLanguage("en");
+    const ui = harness("hub");
+    ui.open();
+    const form = ui.formNodes();
+    assert.equal(form[0].props.navigationTitle, "Choose Search Filters");
+    const titles = form.map((node) => node.props.title);
+    for (const title of [
+      "Apply",
+      "Show Messages",
+      "Clear Filters and Apply",
+      "Manage Sections",
+      "Search Scope",
+      "Sender",
+    ])
+      assert.ok(titles.includes(title), title);
+    const updated = await ui.update({
+      id: "s1",
+      name: "日本語のセクション",
+      channelIds: ["C1"],
+    });
+    assert.equal(ui.open().props.library, updated);
+    assert.equal(updated.sections[0].name, "日本語のセクション");
+  } finally {
+    i18n.setLanguage("ja");
+  }
+});

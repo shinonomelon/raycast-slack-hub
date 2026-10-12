@@ -1,24 +1,27 @@
+import { t } from "../../shared/i18n.ts";
 import type { Conversation } from "../../shared/types.ts";
 import {
   SlackApiError,
   type ApiCall,
   type ApiParams,
 } from "../../slack/slack-api.ts";
-
-export const MEMBERSHIP_TIMEOUT_MS = 30_000;
+export const MEMBERSHIP_TIMEOUT_MS = 30000;
 export type MembershipRequest = {
   signal: AbortSignal;
   deadline: number;
   now?: () => number;
 };
 const unreadable = () =>
-  new SlackApiError("unreadable", "参加関係の応答を読み取れませんでした");
+  new SlackApiError("unreadable", t("参加関係の応答を読み取れませんでした"));
 export function checkRequest(request: MembershipRequest): number {
   if (request.signal.aborted)
-    throw new SlackApiError("aborted", "通信を中断しました");
+    throw new SlackApiError("aborted", t("通信を中断しました"));
   const remaining = request.deadline - (request.now ?? Date.now)();
   if (remaining <= 0)
-    throw new SlackApiError("timeout", "参加関係の取得が時間切れになりました");
+    throw new SlackApiError(
+      "timeout",
+      t("参加関係の取得が時間切れになりました"),
+    );
   return remaining;
 }
 async function pages(
@@ -35,7 +38,12 @@ async function pages(
     const data = await api(
       method,
       { ...params, limit: 200, ...(cursor ? { cursor } : {}) },
-      { signal: request.signal, timeoutMs: checkRequest(request) },
+      {
+        signal: request.signal,
+        timeoutMs: checkRequest(request),
+        deadlineAt: request.deadline,
+        source: "membership",
+      },
     );
     checkRequest(request);
     if (data.ok !== true || !Array.isArray(data[field])) throw unreadable();

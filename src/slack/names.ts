@@ -1,9 +1,9 @@
+import { t } from "../shared/i18n.ts";
 // ID から表示名を引く純粋な部品。@raycast/api を読み込まないので、node のテストから動かせる
 import type { Hit } from "./hits.ts";
 import type { NameLookup } from "./mrkdwn.ts";
 import { mpimDisplayName } from "../features/search/search.ts";
 import type { Conversation, Person } from "../shared/types.ts";
-
 // ID から表示名を引く。DM の channel.name は相手のユーザーID で返る（2026年10月4日に確認）。
 // selfHandles は自分のハンドルの一覧（auth.test の user と Previous Handles）。グループDMの名前から自分を除くのに使う
 export function buildNames(
@@ -32,7 +32,7 @@ export function buildNames(
     if (hit.channelKind === "mpim") {
       return hit.channelName
         ? mpimName(hit.channelName)
-        : (channelName(hit.channelId) ?? "グループDM");
+        : (channelName(hit.channelId) ?? t("グループDM"));
     }
     return `#${hit.channelName ?? channelName(hit.channelId) ?? hit.channelId}`;
   };
@@ -40,10 +40,9 @@ export function buildNames(
   const sender = (hit: Hit) =>
     (hit.userId && byPerson.get(hit.userId)?.displayName) ||
     hit.username ||
-    "不明";
+    t("不明");
   const handleOf = (userId?: string) =>
     userId ? byPerson.get(userId)?.handle : undefined;
   return { lookup, conversationLabel, sender, handleOf };
 }
-
 export type Names = ReturnType<typeof buildNames>;

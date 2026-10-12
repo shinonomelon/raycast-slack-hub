@@ -454,3 +454,72 @@ test("C1失敗後C2の取得待ちで閉じても再開データにC1再試行�
   assert.equal(complete.pendingCount, 0);
   assert.equal(complete.searchIncomplete, false);
 });
+
+test("共通ポリシーの60秒待機で2件目とcursorを保存し、期限後にそのページから再開する", async () => {
+  let time = at;
+  let sent = 0;
+  let nextAt = 0;
+  const requests: string[] = [];
+  const api: ApiCall = async (method, params = {}, options) => {
+    assert.equal(options?.source, "reply-priority");
+    assert.equal(options?.deadlineAt, time + 60000);
+    if (method === "search.messages")
+      return {
+        messages: {
+          matches: String(params.query).startsWith("to:")
+            ? []
+            : [msg(1), msg(2)],
+        },
+      };
+    if (nextAt >= (options?.deadlineAt ?? 0)) {
+      const error = new SlackApiError("deferred", "wait", 60);
+      error.retryAt = nextAt;
+      throw error;
+    }
+    sent++;
+    nextAt = time + 60000;
+    requests.push(`${params.channel}:${params.cursor ?? "first"}`);
+    return params.cursor
+      ? {
+          messages: [
+            {
+              ts: "200000.000000",
+              user: "USELF",
+              text: "回答",
+              thread_ts: params.ts,
+            },
+          ],
+        }
+      : {
+          messages: [{ ts: params.ts, user: "OTHER", text: "親" }],
+          response_metadata: { next_cursor: "next" },
+        };
+  };
+  const scan = createReplyScan({ api, identity, now: () => time });
+  const first = await scan.start();
+  assert.equal(sent, 1);
+  assert.equal(first.pausedUntil, at + 60000);
+  const saved = scan.checkpoint()!;
+  assert.deepEqual(
+    saved.queue.map((task) => [task.key.split(":")[2], task.cursor]),
+    [
+      ["C2", undefined],
+      ["C1", "next"],
+    ],
+  );
+  await scan.continue();
+  assert.equal(sent, 1);
+  time += 60000;
+  await scan.continue();
+  time += 60000;
+  await scan.continue();
+  time += 60000;
+  const final = await scan.continue();
+  assert.deepEqual(requests, ["C1:first", "C2:first", "C1:next", "C2:next"]);
+  assert.equal(final.pendingCount, 0);
+  assert.ok(
+    final.candidates.every(
+      (candidate) => candidate.evidence.kind === "self-post-after",
+    ),
+  );
+});

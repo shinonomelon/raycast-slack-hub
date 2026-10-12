@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 // 自分宛て・既読位置・お気に入りの未読の取得。@raycast/api を読み込まないので、node のテストから動かせる
 // （保存・止める期限・Slack API の呼び出しは、ports で受け取る。画面側の use-triage.ts が本物をつなぐ）。
 //
@@ -41,23 +42,32 @@ import {
   type TriageEntry,
   type UnknownCheck,
 } from "./triage.ts";
-
 // 取らなかった・取れなかった理由。止めている間は取らない（search-gate）。それ以外の失敗はエラー文を出す
 export type Stop =
-  { kind: "paused"; pause: Pause } | { kind: "failed"; message: string };
-
-export type Fetched<T> = { kind: "ok"; value: T } | Stop;
-
+  | {
+      kind: "paused";
+      pause: Pause;
+    }
+  | {
+      kind: "failed";
+      message: string;
+    };
+export type Fetched<T> =
+  | {
+      kind: "ok";
+      value: T;
+    }
+  | Stop;
 export type LastReadRound = {
   lastReads: Map<string, CachedLastRead>;
   stop?: Stop;
 };
-
 // 取得が使うもの。本物は、保存が read-state.ts、止める期限が gate-store.ts、Slack API の呼び出しが slack.ts
 export type Ports = {
   // 自分のユーザー ID。自分宛ての検索と、未読の数え方（自分の投稿は数えない）に使う。
   // auth.test で取った値を、取得を始める前に渡す
   selfId: string;
+  onCacheHit?: () => void;
   now: () => number;
   readPause: (kind: GateKind, now: number) => Pause | undefined;
   // 保存した期限を返す（すでにある期限より前にはしない）
@@ -85,11 +95,12 @@ export type Ports = {
   ) => void;
   searchPage: (
     query: string,
-    options?: { sortDir?: "asc" | "desc" },
+    options?: {
+      sortDir?: "asc" | "desc";
+    },
   ) => Promise<SearchPageOutcome>;
   getLastReads: (ids: readonly string[]) => Promise<LastReadsOutcome>;
 };
-
 export function createTriageFetchers(ports: Ports) {
   // 開いたときの処理は ray develop で2回走り、画面が重なって開かれることもある。
   // 同じ取得は1つだけ動かし、あとから来た呼び出しは、実行中のものの結果を受け取る（検索の回数が倍にならない）。
@@ -101,28 +112,33 @@ export function createTriageFetchers(ports: Ports) {
   // 結果の保存はまだなので、別の取得（選んだ組が違う・前の表示から続いているもの）が同じ会話を重ねて検索しないよう、
   // 検索の間だけ持つ。重ねて検索しなかった取得は、この Promise で、結果が保存されるのを待つ
   const checking = new Map<string, Promise<void>>();
-
   // 検索が失敗したときの扱い。時間切れ・回数制限は、次の検索を止める期限を保存する（閉じて開き直しても止まったまま）。
   // 既読位置の取得（last-read）の期限とは別
   function stopOfSearch(
-    outcome: Exclude<SearchPageOutcome, { kind: "ok" }>,
+    outcome: Exclude<
+      SearchPageOutcome,
+      {
+        kind: "ok";
+      }
+    >,
   ): Stop {
     if (outcome.kind === "aborted") {
-      return { kind: "failed", message: "検索を中断しました" };
+      return {
+        kind: "failed",
+        message: t("検索を中断しました"),
+      };
     }
     const { failure } = outcome;
     return failure.pause
       ? { kind: "paused", pause: ports.writePause("search", failure.pause) }
       : { kind: "failed", message: failure.message };
   }
-
   // 検索してよいか。止めている間（search の期限の内側）は、検索せずに、止めている期限を返す
   function pausedSearch(query: string): Pause | undefined {
     const now = ports.now();
     const gate = decideSearch(query, ports.readPause("search", now), now);
     return !gate.search && gate.reason === "paused" ? gate.pause : undefined;
   }
-
   // 自分宛て（過去7日）。前回の結果が新しければ、それを返す（⌘R のときは使わない）。
   // 2つの検索（メンション・to:）は並列に行い、どちらかが失敗したら、前回の結果を残して失敗にする。
   // 検索が件数の上限で切れたときは、揃っている範囲の境目（cappedBefore）も返して保存する（古い側の件数は下限になる）
@@ -131,6 +147,7 @@ export function createTriageFetchers(ports: Ports) {
       const now = ports.now();
       const cached = ports.loadTriage();
       if (!force && cached && now - cached.at < TRIAGE_MAX_AGE_MS) {
+        ports.onCacheHit?.();
         return { kind: "ok", value: mentionsOf(cached) };
       }
       const queries = mentionQueries(
@@ -140,11 +157,13 @@ export function createTriageFetchers(ports: Ports) {
       // 2つの検索は同じ期限を見る
       const pause = pausedSearch(queries[0]);
       if (pause) return { kind: "paused", pause };
-
       const outcomes = await Promise.all(
         queries.map((query) => ports.searchPage(query)),
       );
-      const searches: { hits: Hit[]; capped: boolean }[] = [];
+      const searches: {
+        hits: Hit[];
+        capped: boolean;
+      }[] = [];
       const stops: Stop[] = [];
       for (const outcome of outcomes) {
         if (outcome.kind === "ok") {
@@ -167,7 +186,6 @@ export function createTriageFetchers(ports: Ports) {
       return { kind: "ok", value: mentions };
     });
   }
-
   // お気に入りの未読。お気に入りを10会話ずつまとめて検索する（5つまで）。前回の結果が新しければ、それを返す。
   // 途中で止めた・失敗したときは、そこまでの結果を保存せず、前の結果を残す
   function fetchFavorites(
@@ -182,7 +200,10 @@ export function createTriageFetchers(ports: Ports) {
         const now = ports.now();
         if (!force) {
           const cached = ports.loadFavoriteHits(key, TRIAGE_MAX_AGE_MS, now);
-          if (cached) return { kind: "ok", value: cached };
+          if (cached) {
+            ports.onCacheHit?.();
+            return { kind: "ok", value: cached };
+          }
         }
         const after = searchAfterDate(new Date(now), TRIAGE_DAYS);
         const chunks: FavoriteChunk[] = [];
@@ -205,7 +226,6 @@ export function createTriageFetchers(ports: Ports) {
       },
     );
   }
-
   // 件数不明の会話を、既読位置の日から古い順に検索して確かめる（個別の確かめ）。
   // 確かめ終えたものは、そのつど保存する。止まった・失敗したときは、そこで終える（残りは件数不明のまま）。
   // 1つ確かめるごとに、検索に出す会話を選び直す（nextCheck）：
@@ -271,7 +291,6 @@ export function createTriageFetchers(ports: Ports) {
       },
     );
   }
-
   // 既読位置の取り直し。取り直す会話は、実行の直前の保存から選ぶ（新鮮なものは飛ばす。⌘R のときは選び直す）。
   // 取った結果のうち、保存するものと止める期限は triage.ts が決める：
   // - 参加していない・見えない会話は null で保存する（60分持つ）。回数制限・失敗は保存しない
@@ -293,7 +312,6 @@ export function createTriageFetchers(ports: Ports) {
       if (isPaused(pause, now)) {
         return { lastReads: cached, stop: { kind: "paused", pause } };
       }
-
       // 問い合わせを始めた時刻。これ以降に既読位置を忘れた会話（行を開いた）は、結果を保存しない
       const requestedAt = ports.now();
       const outcome = await ports.getLastReads(pick);
@@ -328,8 +346,6 @@ export function createTriageFetchers(ports: Ports) {
       };
     });
   }
-
   return { fetchMentions, fetchFavorites, fetchChecks, refreshLastReads };
 }
-
 export type TriageFetchers = ReturnType<typeof createTriageFetchers>;

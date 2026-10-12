@@ -13,6 +13,7 @@ export type MembershipState = {
     | "empty"
     | "failed"
     | "rate-limited"
+    | "deferred"
     | "auth-required";
   data: MembershipData;
   fetchedAt?: number;

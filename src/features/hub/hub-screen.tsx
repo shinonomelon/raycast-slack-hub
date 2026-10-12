@@ -1,3 +1,7 @@
+import { emptyDirectoryWait } from "../../slack/directory-state.ts";
+import { useThreadContext } from "./use-thread-context.ts";
+import { conversationGroups } from "./conversation-groups.ts";
+import { t, getLocale } from "../../shared/i18n.ts";
 import {
   Action,
   ActionPanel,
@@ -121,25 +125,27 @@ import {
   type OrderedSection,
   type SelectionRequest,
 } from "./view-order.ts";
-
 const ICONS: Record<Kind, Icon> = {
   channel: Icon.Hashtag,
   private: Icon.Lock,
   group: Icon.TwoPeople,
   person: Icon.Person,
 };
-
 const CANDIDATE_ICONS: Record<Candidate["kind"], Icon> = {
   ...ICONS,
   self: Icon.PersonCircle,
 };
-
 const MEMBERSHIP_TITLES: Record<Membership, string> = {
-  all: "すべて",
-  joined: "参加中",
-  notJoined: "未参加",
+  get all() {
+    return t("すべて");
+  },
+  get joined() {
+    return t("参加中");
+  },
+  get notJoined() {
+    return t("未参加");
+  },
 };
-
 // 自分用の設定を state とファイルの両方に反映する。
 // 押し出した画面からも呼ばれるので、最新の値は ref から読む
 function usePrefs() {
@@ -153,10 +159,8 @@ function usePrefs() {
   };
   return [prefs, update] as const;
 }
-
 const firstId = <T,>(rows: readonly T[], idOf: (row: T) => string) =>
   rows.length > 0 ? idOf(rows[0]) : undefined;
-
 // メッセージの検索が、いまの検索語について、止まっている・失敗したときの行。
 // 前の検索語の記録は出さない（いまの検索語の結果ではないため）
 function searchStatusRow(
@@ -172,10 +176,13 @@ function searchStatusRow(
         icon={{ source: Icon.Clock, tintColor: Color.Orange }}
         title={
           status.pause.cause === "timeout"
-            ? "検索が時間切れでした"
-            : "Slack の回数制限に当たりました"
+            ? t("検索が時間切れでした")
+            : t("Slack の回数制限に当たりました")
         }
-        subtitle={`${new Date(status.pause.until).toLocaleTimeString("ja-JP")} まで検索を止めます（そのあと、Reload Searchか入力で検索します）`}
+        subtitle={t(
+          "{0} まで検索を止めます（そのあと、Reload Searchか入力で検索します）",
+          new Date(status.pause.until).toLocaleTimeString(getLocale()),
+        )}
         actions={<ActionPanel>{common}</ActionPanel>}
       />
     );
@@ -185,7 +192,7 @@ function searchStatusRow(
       <List.Item
         id={STATUS_ROW_ID}
         icon={{ source: Icon.ExclamationMark, tintColor: Color.Red }}
-        title="検索に失敗しました"
+        title={t("検索に失敗しました")}
         subtitle={status.message}
         actions={<ActionPanel>{common}</ActionPanel>}
       />
@@ -193,22 +200,18 @@ function searchStatusRow(
   }
   return null;
 }
-
 // 自分の情報が取れないときの理由の行の id。ほかの行の id（view-order.ts）と重ならない
 const IDENTITY_ROW_ID = "identity:failure";
-
 // 拡張の設定を開く操作。自分の情報が取れないときの理由には、どれにもこの操作を付ける
-const openPreferencesAction = (
+const openPreferencesAction = () => (
   <Action
     key="open-preferences"
-    title="Open Extension Preferences"
+    title={t("Open Extension Preferences")}
     icon={Icon.Gear}
     onAction={openExtensionPreferences}
   />
 );
-
 const FAILURE_ICON = { source: Icon.ExclamationMark, tintColor: Color.Red };
-
 // 一覧に出せるものが何も無いとき（前回の自分の情報が無く、今回の auth.test もまだ・取れなかった）の画面。
 // 取れなかったときは、理由と、設定を開く操作を出す。Slack のデータは取らない
 function NoIdentity({
@@ -225,15 +228,14 @@ function NoIdentity({
           icon={FAILURE_ICON}
           title={failure.title}
           description={failure.message}
-          actions={<ActionPanel>{openPreferencesAction}</ActionPanel>}
+          actions={<ActionPanel>{openPreferencesAction()}</ActionPanel>}
         />
       ) : (
-        <List.EmptyView title="Slack に自分の情報を問い合わせています" />
+        <List.EmptyView title={t("Slack に自分の情報を問い合わせています")} />
       )}
     </List>
   );
 }
-
 // 開くたびに auth.test で自分の情報（ワークスペースの ID・自分の ID・ハンドル）を取る。
 // 前回の結果があれば、その人の保存した一覧をすぐ出す。Slack から取るのは、今回の auth.test が成功してから
 // （取得してよいかと、どの人の名前空間を使うかは、decideFetch の結果 decision で決まる。session はそれを渡すだけ）。
@@ -256,7 +258,6 @@ export default function Command() {
     />
   );
 }
-
 function Hub({
   session,
   initialToken,
@@ -290,10 +291,12 @@ function Hub({
   // 一覧の右のサイドバー（メッセージの本文の全文）を出しているか。開き直すと、閉じた状態から始まる。
   // 出し入れは選択を動かす操作に数えない（予約を作らない）
   const [showDetail, setShowDetail] = useState(false);
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
   // 人の一覧とは別に持ち、片方の取得がもう片方の表示を待たせないようにする
   const conversations = useDirectory(CONVERSATIONS, session);
   const people = useDirectory(PEOPLE, session);
   const joined = useDirectory(JOINED, session);
+  const directoryWait = emptyDirectoryWait([conversations, people, joined]);
   const joinedIds = useMemo(() => new Set(joined.data ?? []), [joined.data]);
   const [prefs, updatePrefs] = usePrefs();
   const library = useChannelLibrary({
@@ -337,9 +340,12 @@ function Hub({
     people.data ?? [],
   );
   const scopeWarning = scopeResolution.missingSection
-    ? "選択したセクションは削除されています。検索条件を選び直してください"
+    ? t("選択したセクションは削除されています。検索条件を選び直してください")
     : scopeResolution.unresolvedChannelIds.length
-      ? `参照できないチャンネル${scopeResolution.unresolvedChannelIds.length}件を除外しています。ディレクトリを更新してください`
+      ? t(
+          "参照できないチャンネル{0}件を除外しています。ディレクトリを更新してください",
+          scopeResolution.unresolvedChannelIds.length,
+        )
       : undefined;
   const favoriteValues = useMemo(
     () =>
@@ -355,7 +361,6 @@ function Hub({
   const setMembership = (next: Membership) => {
     if (next !== membership) updatePrefs((p) => ({ ...p, membership: next }));
   };
-
   // 一覧の行に出す人にボットは含めない（メンションの候補には含める。候補は投稿フォームが読む）
   const listed = useMemo(() => listedPeople(people.data ?? []), [people.data]);
   const items = useMemo(
@@ -423,7 +428,10 @@ function Hub({
     searchText,
     scopeResolution.resolved.fingerprint,
   ]);
-
+  const groupedConversations = useMemo(
+    () => conversationGroups(shown),
+    [shown],
+  );
   // 検索欄の解釈。絞り込みの候補の元は、お気に入り → 最近開いた順に並べて渡す
   // （一致の強さが同じなら、よく使うものが候補の上に来る）
   const sources = useMemo(
@@ -473,7 +481,6 @@ function Hub({
       buildNames(conversations.data ?? [], people.data ?? [], selfHandleList),
     [conversations.data, people.data, selfHandleList],
   );
-
   // セクションの順。候補（と、相手が決まらない絞り込みの警告）は、あればいちばん上
   const hasTopSection = candidates.length > 0 || resolved.unresolved.length > 0;
   const order = sectionOrder(searchText, override, hasTopSection, messageMode);
@@ -485,15 +492,23 @@ function Hub({
     search: { query: search.query, status: search.status },
     firstIds: {
       candidates: firstId(candidates, candidateRowId),
-      conversations: firstId(shown, conversationRowId),
+      conversations: firstId(
+        groupedConversations.flatMap((group) => group.rows),
+        conversationRowId,
+      ),
       messages: firstId(messageHits, messageRowId),
       triage: firstId(triage.rows, ({ hit }) => triageRowId(hit)),
     },
   });
   useEffect(() => {
+    if (selection.selectedId) setActiveRowId(selection.selectedId);
     if (request && selection.next === undefined) setRequest(undefined);
-  }, [request, selection.next]);
-
+  }, [request, selection.next, selection.selectedId]);
+  const selectedRowId = selection.selectedId ?? activeRowId;
+  const selectedHit = order.includes("messages")
+    ? messageHits.find((hit) => messageRowId(hit) === selectedRowId)
+    : triage.rows.find(({ hit }) => triageRowId(hit) === selectedRowId)?.hit;
+  const threadDetail = useThreadContext(session, selectedHit, showDetail);
   // 変えたあとの文字に、入力中の絞り込み語の候補があるか
   const hasCandidatesFor = (text: string) => {
     const token = completingToken(parseQuery(text));
@@ -501,7 +516,6 @@ function Hub({
       ? candidatesFor(token, sources, identity.userId).length > 0
       : false;
   };
-
   // 検索欄の文字を変える（打った・Tab で足した・候補を確定した）。文字を変えた直後も、先頭の行を選ぶ予約を作る
   // （afterTextChange）。入れ替えの印は、文字を変えたあとのもので予約を作る（変える前の文字も渡し、
   // 空欄から打ち始めたときに、空欄での入れ替えを持ち越さない）。
@@ -518,18 +532,15 @@ function Hub({
     setOverride(next.override);
     setRequest(next.request);
   };
-
   // この行（会話・人・メッセージの会話や送信者）で絞る。検索欄に足し、新しい検索語のメッセージが先頭に来たら選ぶ。
   // 足す前に外す語は、行の種類で決まる（会話・人の行は、探すのに打った名前も外す。textWithFilter）
   const filterBy = (filter: string, row: FilterRow) =>
     changeSearchText(textWithFilter(searchText, filter, row));
-
   // 候補を確定する。入力中の語が in:#名前 などに置き換わる
   const confirmCandidate = (candidate: Candidate) => {
     if (!completing) return;
     changeSearchText(applyCandidate(searchText, completing, candidate));
   };
-
   // Shift+Tab：会話とメッセージ（検索欄が空なら自分宛て）の順を入れ替え、先に出るほうの先頭の行を選ぶ
   const swapOrder = () => {
     const next = toggleOverride(searchText, override, messageMode);
@@ -538,21 +549,18 @@ function Hub({
       requestFirstRow(searchText, next, candidates.length > 0, messageMode),
     );
   };
-
   // 会話と人の一覧をすべて取り直す
   const reload = () => {
     void conversations.reload();
     void people.reload();
     void joined.reload();
   };
-
   // ⌘R：表示中の検索に加えて、自分宛て・既読位置・お気に入りの未読も、キャッシュの新しさに関わらず取り直す。
   // 検索を止めている間（search-gate）は取り直さない
   const reloadSearch = () => {
     search.revalidate();
     triage.revalidate();
   };
-
   const marksRef = useRef(triage.marks);
   marksRef.current = triage.marks;
   const membershipContext: MembershipContext = {
@@ -565,14 +573,13 @@ function Hub({
     markReplied: triage.markReplied,
     toggleHandled: triage.toggleHandled,
   };
-
   // どの行を選んでいても、一覧が空でも共通操作へ進める。
   // 並べる順は行ごとに決める（actionsIn）。同じ操作を2つ置くとショートカットが重なるので、足さずに、順だけを替える
   const commonAction: Record<CommonAction, ReactElement> = {
     swap: (
       <Action
         key="swap"
-        title="Swap Conversations and Messages"
+        title={t("Swap Conversations and Messages")}
         icon={Icon.Switch}
         shortcut={SWAP_SHORTCUT}
         onAction={swapOrder}
@@ -581,7 +588,7 @@ function Hub({
     "reload-search": (
       <Action
         key="reload-search"
-        title="Reload Search"
+        title={t("Reload Search")}
         icon={Icon.ArrowClockwise}
         shortcut={Keyboard.Shortcut.Common.Refresh}
         onAction={reloadSearch}
@@ -590,7 +597,7 @@ function Hub({
     "reload-all": (
       <Action
         key="reload-all"
-        title="Reload Conversations and People"
+        title={t("Reload Conversations and People")}
         icon={Icon.ArrowClockwise}
         shortcut={RELOAD_ALL_SHORTCUT}
         onAction={reload}
@@ -604,10 +611,10 @@ function Hub({
     if (!session.canFetch || !library.ready) {
       void showToast({
         style: Toast.Style.Failure,
-        title: "検索条件をまだ開けません",
+        title: t("検索条件をまだ開けません"),
         message:
           library.error ||
-          "チャンネル一覧の取得完了を待つか、一覧を更新してください",
+          t("チャンネル一覧の取得完了を待つか、一覧を更新してください"),
       });
       return;
     }
@@ -650,7 +657,7 @@ function Hub({
   const scopeAction = (
     <Action
       key="search-scope"
-      title="検索条件を選ぶ"
+      title={t("検索条件を選ぶ")}
       icon={Icon.Filter}
       onAction={openScope}
     />
@@ -658,7 +665,7 @@ function Hub({
   const continueAction = search.progress?.pendingCount ? (
     <Action
       key="continue-search"
-      title="続きを取得"
+      title={t("続きを取得")}
       icon={Icon.ArrowDown}
       onAction={() => {
         if (!search.isLoading) search.continueSearch();
@@ -670,18 +677,16 @@ function Hub({
     scopeAction,
     continueAction,
   ];
-
   // 詳細を持たない候補・状態の行では、主操作の次に閉じる操作を置く。
   const hideDetails = showDetail ? (
     <Action
       key="hide-details"
-      title="Hide Details"
+      title={t("Hide Details")}
       icon={Icon.Sidebar}
       shortcut={DETAILS_SHORTCUT}
       onAction={() => setShowDetail(false)}
     />
   ) : null;
-
   // メッセージの行（空欄の自分宛てと検索結果で共通）。id は、同じメッセージが両方に出ても重ならない行の id
   const messageRow = (hit: Hit, id: string, state: ReadState | undefined) => (
     <MessageRow
@@ -694,6 +699,9 @@ function Hub({
       membershipContext={membershipContext}
       marked={triage.marks.has(hit.key)}
       showDetail={showDetail}
+      threadDetail={
+        showDetail && selectedRowId === id ? threadDetail : undefined
+      }
       onToggleDetail={() => setShowDetail((v) => !v)}
       conversationFilter={filterForHitConversation(hit, tokenOf)}
       senderFilter={filterForSender(hit, tokenOf)}
@@ -706,7 +714,6 @@ function Hub({
       common={commonActions}
     />
   );
-
   const toggleFavorite = (id: string) => {
     const channel = conversations.data?.find(
       (c) => c.id === id && c.type !== "mpim",
@@ -727,7 +734,6 @@ function Hub({
         : [...p.favorites, id],
     }));
   };
-
   const setAliases = (id: string, aliases: string[]) =>
     updatePrefs((p) => {
       const next = { ...p.aliases };
@@ -735,12 +741,10 @@ function Hub({
       else delete next[id];
       return { ...p, aliases: next };
     });
-
   const conversationNames = useMemo(
     () => items.filter((i) => i.kind !== "person").map((i) => i.title),
     [items],
   );
-
   const filterLabels = resolved.filters
     .map((f) => `${f.negated ? "-" : ""}${f.modifier}:${f.label}`)
     .join(" ");
@@ -756,7 +760,6 @@ function Hub({
     resolved.query,
     standaloneWithDetails("search-status"),
   );
-
   return (
     <List
       isLoading={
@@ -772,11 +775,12 @@ function Hub({
       searchText={searchText}
       onSearchTextChange={changeSearchText}
       selectedItemId={selection.selectedId}
+      onSelectionChange={setActiveRowId}
       isShowingDetail={showDetail}
-      searchBarPlaceholder="チャンネル・人・グループDMを検索（in: from: to: でメッセージを検索）"
+      searchBarPlaceholder={t("チャンネル・人・メッセージを検索")}
       searchBarAccessory={
         <List.Dropdown
-          tooltip="参加しているかで絞る"
+          tooltip={t("参加しているかで絞る")}
           value={membership}
           onChange={(value) => {
             if (value === "reply-priority") {
@@ -807,22 +811,32 @@ function Hub({
               value={m}
             />
           ))}
-          <List.Dropdown.Item value="reply-priority" title="返信待ち" />
+          <List.Dropdown.Item value="reply-priority" title={t("返信待ち")} />
         </List.Dropdown>
       }
     >
       <List.EmptyView
         title={
-          membership === "all"
-            ? "見つかりません"
-            : `${MEMBERSHIP_TITLES[membership]}では見つかりません`
+          directoryWait
+            ? directoryWait.status === "pending"
+              ? t("一覧の取得を一時停止しています")
+              : t("一覧を取得中です")
+            : membership === "all"
+              ? t("見つかりません")
+              : t("{0}では見つかりません", MEMBERSHIP_TITLES[membership])
         }
-        description="検索欄の右のドロップダウンで、参加中・未参加の絞り込みを切り替えられます"
+        description={
+          directoryWait
+            ? t("再読み込みで取得を続けられます")
+            : t(
+                "検索欄の右のドロップダウンで、参加中・未参加の絞り込みを切り替えられます",
+              )
+        }
         actions={<ActionPanel>{standaloneWithDetails("empty")}</ActionPanel>}
       />
       {/* 今回の auth.test が取れなかったとき：理由を一覧の先頭に出す。下の一覧は、前回の結果の人の保存したもの
-          （Slack からは取らない）。この行の1番目の操作（↵）は、設定を開く操作。
-          行に収まらない長い文は、マウスを載せると全文が出る */}
+              （Slack からは取らない）。この行の1番目の操作（↵）は、設定を開く操作。
+              行に収まらない長い文は、マウスを載せると全文が出る */}
       {failure ? (
         <List.Section key="identity">
           <List.Item
@@ -832,7 +846,7 @@ function Hub({
             subtitle={{ value: failure.message, tooltip: failure.message }}
             actions={
               <ActionPanel>
-                {openPreferencesAction}
+                {openPreferencesAction()}
                 {hideDetails}
                 {commonActions}
               </ActionPanel>
@@ -852,7 +866,7 @@ function Hub({
               <ActionPanel>
                 {scopeAction}
                 <Action
-                  title="チャンネル一覧と整理データを更新"
+                  title={t("チャンネル一覧と整理データを更新")}
                   onAction={async () => {
                     await conversations.reload();
                     await library.reload();
@@ -867,7 +881,7 @@ function Hub({
         if (section === "candidates") {
           if (!hasTopSection) return null;
           return (
-            <List.Section key="candidates" title="候補">
+            <List.Section key="candidates" title={t("候補")}>
               {candidates.map((c) => (
                 <List.Item
                   key={candidateRowId(c)}
@@ -878,7 +892,7 @@ function Hub({
                   actions={
                     <ActionPanel>
                       <Action
-                        title="Use This Candidate"
+                        title={t("Use This Candidate")}
                         icon={Icon.ArrowRight}
                         onAction={() => confirmCandidate(c)}
                       />
@@ -893,8 +907,10 @@ function Hub({
                   key={warningRowId(u.start)}
                   id={warningRowId(u.start)}
                   icon={{ source: Icon.Warning, tintColor: Color.Orange }}
-                  title={`「${u.raw}」の相手が決まりません`}
-                  subtitle="候補から選ぶか、正式名で打ってください（この絞り込みは送りません）"
+                  title={t("「{0}」の相手が決まりません", u.raw)}
+                  subtitle={t(
+                    "候補から選ぶか、正式名で打ってください（この絞り込みは送りません）",
+                  )}
                   actions={
                     <ActionPanel>
                       {standaloneWithDetails("unresolved-filter")}
@@ -907,9 +923,9 @@ function Hub({
         }
         if (section === "conversations") {
           if (shown.length === 0) return null;
-          return (
-            <List.Section key="conversations" title="会話">
-              {shown.map((item) => {
+          return groupedConversations.map((group) => (
+            <List.Section key={group.id} title={group.title}>
+              {group.rows.map((item) => {
                 const isFavorite = favorites.has(item.id);
                 // 未読の件数（最上位の投稿だけで数える）。下限のときは「3+」
                 const unread = triage.tags.get(item.id);
@@ -919,8 +935,8 @@ function Hub({
                 const filter = filterForRow(item, tokenOf);
                 const filterTitle =
                   item.kind === "person"
-                    ? "Filter by This Person"
-                    : "Filter by This Conversation";
+                    ? t("Filter by This Person")
+                    : t("Filter by This Conversation");
                 return (
                   <List.Item
                     key={conversationRowId(item)}
@@ -945,20 +961,25 @@ function Hub({
                                 color: Color.Red,
                               },
                               tooltip: unread.atLeast
-                                ? "未読（件数は下限）"
-                                : "未読",
+                                ? t("未読（件数は下限）")
+                                : t("未読"),
                             },
                           ]
                         : []),
                       ...item.aliases.map((alias) => ({ tag: alias })),
                       ...(isFavorite
-                        ? [{ icon: Icon.Star, tooltip: "お気に入り" }]
+                        ? [
+                            {
+                              icon: Icon.Star,
+                              tooltip: t("お気に入り"),
+                            },
+                          ]
                         : []),
                     ]}
                     actions={
                       <ActionPanel>
                         <Action.Open
-                          title="Open in Slack"
+                          title={t("Open in Slack")}
                           icon={Icon.ArrowRight}
                           target={targetLink(identity.teamId, target)}
                           application="Slack"
@@ -972,13 +993,15 @@ function Hub({
                           }}
                         />
                         <Action
-                          title={showDetail ? "Hide Details" : "Show Details"}
+                          title={
+                            showDetail ? t("Hide Details") : t("Show Details")
+                          }
                           icon={Icon.Sidebar}
                           shortcut={DETAILS_SHORTCUT}
                           onAction={() => setShowDetail((value) => !value)}
                         />
                         <Action.Push
-                          title="Write"
+                          title={t("Write")}
                           icon={Icon.Message}
                           shortcut={WRITE_SHORTCUT}
                           target={
@@ -991,7 +1014,7 @@ function Hub({
                         />
                         {session.canFetch && item.kind === "person" ? (
                           <Action.Push
-                            title="View Channels with This Person"
+                            title={t("View Channels with This Person")}
                             icon={Icon.Hashtag}
                             target={
                               <PersonChannels
@@ -1004,7 +1027,7 @@ function Hub({
                         {session.canFetch &&
                         (item.kind === "channel" || item.kind === "private") ? (
                           <Action.Push
-                            title="View Members"
+                            title={t("View Members")}
                             icon={Icon.TwoPeople}
                             target={
                               <ChannelMembers
@@ -1037,8 +1060,8 @@ function Hub({
                         <Action
                           title={
                             isFavorite
-                              ? "Remove from Favorites"
-                              : "Add to Favorites"
+                              ? t("Remove from Favorites")
+                              : t("Add to Favorites")
                           }
                           icon={isFavorite ? Icon.StarDisabled : Icon.Star}
                           shortcut={Keyboard.Shortcut.Common.Pin}
@@ -1049,7 +1072,7 @@ function Hub({
                         (item.kind === "channel" || item.kind === "private") ? (
                           <>
                             <Action
-                              title="このチャンネルでメッセージを検索"
+                              title={t("このチャンネルでメッセージを検索")}
                               icon={Icon.MagnifyingGlass}
                               onAction={() => {
                                 setSearchScope({
@@ -1068,7 +1091,7 @@ function Hub({
                               }}
                             />
                             <Action.Push
-                              title="セクションへの所属"
+                              title={t("セクションへの所属")}
                               icon={Icon.Folder}
                               target={
                                 <SectionMembershipForm
@@ -1082,7 +1105,7 @@ function Hub({
                           </>
                         ) : null}
                         <Action.Push
-                          title="Edit Aliases"
+                          title={t("Edit Aliases")}
                           icon={Icon.Pencil}
                           shortcut={Keyboard.Shortcut.Common.Edit}
                           target={
@@ -1096,7 +1119,7 @@ function Hub({
                           }
                         />
                         <Action.Push
-                          title="Edit Dictionary"
+                          title={t("Edit Dictionary")}
                           icon={Icon.Book}
                           shortcut={{ modifiers: ["cmd"], key: "d" }}
                           target={
@@ -1110,13 +1133,13 @@ function Hub({
                           }
                         />
                         <Action.CopyToClipboard
-                          title="Copy ID"
+                          title={t("Copy ID")}
                           content={item.id}
                           shortcut={Keyboard.Shortcut.Common.Copy}
                         />
                         {commonActions}
                         <Action
-                          title="Reset Ranking"
+                          title={t("Reset Ranking")}
                           icon={Icon.ArrowCounterClockwise}
                           onAction={() => resetRanking(item)}
                         />
@@ -1126,7 +1149,7 @@ function Hub({
                 );
               })}
             </List.Section>
-          );
+          ));
         }
         // 自分宛て：開いたときの判定で未読・スレッド・判定できないもの（新しい順）。検索欄が空のときだけ出る
         if (section === "triage") {
@@ -1139,8 +1162,8 @@ function Hub({
           return (
             <List.Section
               key="triage"
-              title="自分宛て（過去7日）"
-              subtitle={`${triage.rows.length} 件`}
+              title={t("自分宛て（過去7日）")}
+              subtitle={t("{0} 件", triage.rows.length)}
             >
               {triage.rows.map(({ hit, state }) =>
                 messageRow(hit, triageRowId(hit), state),
@@ -1154,12 +1177,16 @@ function Hub({
         return (
           <List.Section
             key="messages"
-            title="メッセージ"
+            title={t("メッセージ")}
             subtitle={
               messageHits.length > 0
                 ? [
                     filterLabels,
-                    `${search.progress?.partial ? "取得済み" : ""}${messageHits.length} 件`,
+                    t(
+                      "{0}{1} 件",
+                      search.progress?.partial ? t("取得済み") : "",
+                      messageHits.length,
+                    ),
                   ]
                     .filter(Boolean)
                     .join(" · ")
@@ -1172,30 +1199,45 @@ function Hub({
                 id="scope-search-progress"
                 title={
                   search.progress.capped
-                    ? "検索上限に達しました。範囲を狭めてください"
+                    ? t("検索上限に達しました。範囲を狭めてください")
                     : search.progress.failedQueries.length
-                      ? "一部の検索に失敗しました"
-                      : "取得途中"
+                      ? t("一部の検索に失敗しました")
+                      : t("取得途中")
                 }
-                subtitle={`${search.progress.completedSearches}/${search.progress.totalSearches} 検索対象${search.progress.omittedCount ? ` · ${search.progress.omittedCount} 件省略` : ""}`}
+                subtitle={t(
+                  "{0}/{1} 検索対象{2}",
+                  search.progress.completedSearches,
+                  search.progress.totalSearches,
+                  search.progress.omittedCount
+                    ? t(" \u00B7 {0} 件省略", search.progress.omittedCount)
+                    : "",
+                )}
                 icon={Icon.Info}
                 actions={
                   <ActionPanel>
                     <Action.Push
-                      title="取得状況"
+                      title={t("取得状況")}
                       target={
                         <Detail
-                          markdown={`取得済み ${messageHits.length} 件。${search.progress.omittedCount ? `保存上限で ${search.progress.omittedCount} 件を省略しました。` : ""}
-
-各検索は最大2ページ、全体で最大400件を保存します。取得済みの結果を新しい順に並べています。全範囲の最新400件を保証するものではありません。
-
-取得中の新着・編集・検索インデックスの変更でページ境界が動くため、重複を除いても一部の投稿を取得できない場合があります。必要なら範囲を狭めて先頭から更新してください。`}
+                          markdown={t(
+                            "取得済み {0} 件。{1}\n\n各検索は最大2ページ、全体で最大400件を保存します。取得済みの結果を新しい順に並べています。全範囲の最新400件を保証するものではありません。\n\n取得中の新着・編集・検索インデックスの変更でページ境界が動くため、重複を除いても一部の投稿を取得できない場合があります。必要なら範囲を狭めて先頭から更新してください。",
+                            messageHits.length,
+                            search.progress.omittedCount
+                              ? t(
+                                  "保存上限で {0} 件を省略しました。",
+                                  search.progress.omittedCount,
+                                )
+                              : "",
+                          )}
                         />
                       }
                     />
                     {continueAction}
                     {scopeAction}
-                    <Action title="先頭から更新" onAction={search.revalidate} />
+                    <Action
+                      title={t("先頭から更新")}
+                      onAction={search.revalidate}
+                    />
                   </ActionPanel>
                 }
               />

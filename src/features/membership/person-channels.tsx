@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import {
   Action,
   ActionPanel,
@@ -18,7 +19,6 @@ import { DETAILS_SHORTCUT, WRITE_SHORTCUT } from "../hub/shortcuts.ts";
 import { PersonPicker } from "./person-picker.tsx";
 import { ChannelMembers } from "./channel-members.tsx";
 import { ConversationMessages } from "./conversation-messages.tsx";
-
 export function PersonChannels({
   context,
   personId,
@@ -31,7 +31,7 @@ export function PersonChannels({
   const [detail, setDetail] = useState(false);
   const hideDetails = detail ? (
     <Action
-      title="Hide Details"
+      title={t("Hide Details")}
       icon={Icon.Sidebar}
       shortcut={DETAILS_SHORTCUT}
       onAction={() => setDetail(false)}
@@ -42,14 +42,19 @@ export function PersonChannels({
   const labels = ids.map(
     (id) =>
       context.people.find((person) => person.id === id)?.displayName ??
-      (context.session.fetchAs?.userId === id ? "自分" : id),
+      (context.session.fetchAs?.userId === id ? t("自分") : id),
   );
-  const conditions = `全員が参加（${ids.length}/${MAX_PEOPLE}人）: ${labels.join("・")}`;
+  const conditions = t(
+    "全員が参加（{0}/{1}人）: {2}",
+    ids.length,
+    MAX_PEOPLE,
+    labels.join("・"),
+  );
   const controls = [
     context.session.canFetch && ids.length < MAX_PEOPLE ? (
       <Action.Push
         key="add-person"
-        title="Add Person"
+        title={t("Add Person")}
         icon={Icon.AddPerson}
         target={
           <PersonPicker
@@ -63,7 +68,7 @@ export function PersonChannels({
     context.session.canFetch && ids.length > 1 ? (
       <Action.Push
         key="remove-person"
-        title="Remove Person"
+        title={t("Remove Person")}
         icon={Icon.Person}
         target={
           <PersonPicker
@@ -78,7 +83,7 @@ export function PersonChannels({
     context.session.canFetch ? (
       <Action
         key="reset-people"
-        title="Reset People"
+        title={t("Reset People")}
         icon={Icon.ArrowCounterClockwise}
         onAction={() => setIds([personId])}
       />
@@ -86,14 +91,14 @@ export function PersonChannels({
     context.session.canFetch ? (
       <Action
         key="refresh"
-        title="Refresh"
+        title={t("Refresh")}
         icon={Icon.ArrowClockwise}
         onAction={state.refresh}
       />
     ) : null,
     <Action
       key="preferences"
-      title="Open Extension Preferences"
+      title={t("Open Extension Preferences")}
       icon={Icon.Gear}
       onAction={openExtensionPreferences}
     />,
@@ -101,8 +106,8 @@ export function PersonChannels({
   const [primaryControl, ...otherControls] = controls;
   return (
     <List
-      navigationTitle="参加チャンネル"
-      searchBarPlaceholder="チャンネル名・別名で絞り込む"
+      navigationTitle={t("参加チャンネル")}
+      searchBarPlaceholder={t("チャンネル名・別名で絞り込む")}
       searchText={text}
       onSearchTextChange={setText}
       filtering={false}
@@ -113,15 +118,20 @@ export function PersonChannels({
         title={
           state.status === "failed" ||
           state.status === "rate-limited" ||
+          state.status === "deferred" ||
           state.status === "auth-required"
-            ? "参加チャンネルを取得できません"
+            ? t("参加チャンネルを取得できません")
             : state.status === "loading"
-              ? "参加チャンネルを取得中"
+              ? t("参加チャンネルを取得中")
               : text
-                ? "名前に一致するチャンネルがありません"
-                : "この条件のチャンネルはありません"
+                ? t("名前に一致するチャンネルがありません")
+                : t("この条件のチャンネルはありません")
         }
-        description={`${conditions}\n公開チャンネルと、自分も参加する非公開チャンネル（アーカイブ除外）\n${membershipStatus(state)}`}
+        description={t(
+          "{0}\n公開チャンネルと、自分も参加する非公開チャンネル（アーカイブ除外）\n{1}",
+          conditions,
+          membershipStatus(state),
+        )}
         actions={
           <ActionPanel>
             {primaryControl}
@@ -132,7 +142,10 @@ export function PersonChannels({
       />
       <List.Section
         title={conditions}
-        subtitle={`公開・自分も参加する非公開（アーカイブ除外） · ${membershipStatus(state)}`}
+        subtitle={t(
+          "公開・自分も参加する非公開（アーカイブ除外） \u00B7 {0}",
+          membershipStatus(state),
+        )}
       >
         {rows.map((row) => (
           <List.Item
@@ -144,7 +157,7 @@ export function PersonChannels({
             actions={
               <ActionPanel>
                 <Action.Open
-                  title="Open in Slack"
+                  title={t("Open in Slack")}
                   target={slackAppChannelLink(
                     context.session.display.teamId,
                     row.id,
@@ -152,13 +165,13 @@ export function PersonChannels({
                   application="Slack"
                 />
                 <Action
-                  title={detail ? "Hide Details" : "Show Details"}
+                  title={detail ? t("Hide Details") : t("Show Details")}
                   icon={Icon.Sidebar}
                   shortcut={DETAILS_SHORTCUT}
                   onAction={() => setDetail((value) => !value)}
                 />
                 <Action.Push
-                  title="Write"
+                  title={t("Write")}
                   shortcut={WRITE_SHORTCUT}
                   target={
                     <ComposeForm
@@ -169,7 +182,7 @@ export function PersonChannels({
                   }
                 />
                 <Action.Push
-                  title="Search in This Conversation"
+                  title={t("Search in This Conversation")}
                   icon={Icon.MagnifyingGlass}
                   target={
                     <ConversationMessages
@@ -183,7 +196,7 @@ export function PersonChannels({
                   }
                 />
                 <Action.Push
-                  title="View Members"
+                  title={t("View Members")}
                   icon={Icon.TwoPeople}
                   target={
                     <ChannelMembers

@@ -1,3 +1,4 @@
+import { t } from "../shared/i18n.ts";
 import { normalizeMatch, type Hit } from "./hits.ts";
 import { toPeople, type RawUser } from "./people.ts";
 import {
@@ -14,10 +15,11 @@ import {
   type ApiCall,
   type ApiMethod,
   type ApiParams,
+  type ApiSource,
 } from "./slack-api.ts";
 import { LAST_READ_BUDGET } from "../features/triage/triage.ts";
 import type { Conversation, LastReadRow, Person } from "../shared/types.ts";
-const LIST_TIMEOUT_MS = 120_000;
+const LIST_TIMEOUT_MS = 120000;
 // カーソルを最後まで読み、失敗したページがあれば部分的な一覧をキャッシュしない。
 async function listPages(
   api: ApiCall,
@@ -32,19 +34,25 @@ async function listPages(
   do {
     const remaining = LIST_TIMEOUT_MS - (Date.now() - started);
     if (remaining <= 0)
-      throw new SlackApiError("timeout", "一覧の取得が時間切れになりました");
+      throw new SlackApiError("timeout", t("一覧の取得が時間切れになりました"));
     const data = await api(
       method,
       { ...params, limit: 200, ...(cursor ? { cursor } : {}) },
       { timeoutMs: remaining },
     );
     if (!Array.isArray(data[field]))
-      throw new SlackApiError("unreadable", "一覧の応答を読み取れませんでした");
+      throw new SlackApiError(
+        "unreadable",
+        t("一覧の応答を読み取れませんでした"),
+      );
     rows.push(...data[field]);
     const next = object(data.response_metadata).next_cursor;
     cursor = typeof next === "string" && next.trim() ? next.trim() : undefined;
     if (cursor && seen.has(cursor))
-      throw new SlackApiError("unreadable", "一覧のカーソルが繰り返されました");
+      throw new SlackApiError(
+        "unreadable",
+        t("一覧のカーソルが繰り返されました"),
+      );
     if (cursor) seen.add(cursor);
   } while (cursor);
   return rows;
@@ -54,6 +62,9 @@ export async function listConversations(api: ApiCall): Promise<Conversation[]> {
     types: "public_channel,private_channel,mpim",
     exclude_archived: true,
   });
+  return normalizeConversations(rows);
+}
+export function normalizeConversations(rows: unknown[]): Conversation[] {
   const result = new Map<string, Conversation>();
   for (const raw of rows) {
     const c = object(raw);
@@ -77,6 +88,9 @@ export async function listConversations(api: ApiCall): Promise<Conversation[]> {
 }
 export async function listPeople(api: ApiCall): Promise<Person[]> {
   const rows = await listPages(api, "users.list", "members", {});
+  return normalizePeople(rows);
+}
+export function normalizePeople(rows: unknown[]): Person[] {
   const users: RawUser[] = [];
   for (const row of rows) {
     const user = object(row);
@@ -103,13 +117,16 @@ export async function listPeople(api: ApiCall): Promise<Person[]> {
       },
     });
   }
-  return toPeople(users);
+  return toPeople([...new Map(users.map((user) => [user.id, user])).values()]);
 }
 export async function listJoinedChannelIds(api: ApiCall): Promise<string[]> {
   const rows = await listPages(api, "users.conversations", "channels", {
     types: "public_channel",
     exclude_archived: true,
   });
+  return normalizeJoined(rows);
+}
+export function normalizeJoined(rows: unknown[]): string[] {
   return [
     ...new Set(
       rows
@@ -125,13 +142,33 @@ export async function listJoinedChannelIds(api: ApiCall): Promise<string[]> {
   ];
 }
 export type SearchOutcome =
-  | { kind: "ok"; hits: Hit[]; capped?: boolean; pageCount?: number }
-  | { kind: "failed"; failure: SearchFailure }
-  | { kind: "aborted" };
+  | {
+      kind: "ok";
+      hits: Hit[];
+      capped?: boolean;
+      pageCount?: number;
+    }
+  | {
+      kind: "failed";
+      failure: SearchFailure;
+    }
+  | {
+      kind: "aborted";
+    };
 export type SearchPageOutcome =
-  | { kind: "ok"; hits: Hit[]; capped: boolean; pageCount?: number }
-  | { kind: "failed"; failure: SearchFailure }
-  | { kind: "aborted" };
+  | {
+      kind: "ok";
+      hits: Hit[];
+      capped: boolean;
+      pageCount?: number;
+    }
+  | {
+      kind: "failed";
+      failure: SearchFailure;
+    }
+  | {
+      kind: "aborted";
+    };
 export async function searchPage(
   query: string,
   options: {
@@ -142,6 +179,8 @@ export async function searchPage(
     sortDir?: "asc" | "desc";
     page?: number;
     timeoutMs?: number;
+    deadlineAt?: number;
+    source?: ApiSource;
   },
 ): Promise<SearchPageOutcome> {
   const { api, selfId, signal, now = Date.now } = options;
@@ -156,12 +195,17 @@ export async function searchPage(
         page: options.page ?? 1,
         highlight: false,
       },
-      { timeoutMs: options.timeoutMs ?? SEARCH_TIMEOUT_MS, signal },
+      {
+        timeoutMs: options.timeoutMs ?? SEARCH_TIMEOUT_MS,
+        signal,
+        deadlineAt: options.deadlineAt ?? now() + SEARCH_TIMEOUT_MS,
+        source: options.source ?? "search",
+      },
     );
     if (signal?.aborted) return { kind: "aborted" };
     const messages = object(data.messages);
     if (!Array.isArray(messages.matches))
-      throw new SlackApiError("unreadable", "検索結果にmatchesがありません");
+      throw new SlackApiError("unreadable", t("検索結果にmatchesがありません"));
     const hits = messages.matches
       .map((m) => normalizeMatch(m, selfId))
       .filter((hit): hit is Hit => hit !== undefined);
@@ -213,18 +257,31 @@ export async function searchMessages(
     : result;
 }
 export type LastReadsOutcome =
-  | { kind: "ok"; rows: LastReadRow[] }
-  | { kind: "failed"; failure: LastReadFailure };
+  | {
+      kind: "ok";
+      rows: LastReadRow[];
+    }
+  | {
+      kind: "failed";
+      failure: LastReadFailure;
+    };
 // 会話単位で既読位置を読み、回数制限後は残りの問い合わせを止める。
 export async function getLastReads(
   ids: readonly string[],
-  options: { api: ApiCall; now?: () => number },
+  options: {
+    api: ApiCall;
+    now?: () => number;
+    deadlineAt?: number;
+    source?: ApiSource;
+  },
 ): Promise<LastReadsOutcome> {
   const requested = [...new Set(ids)]
     .filter((id) => /^[CDG][A-Z0-9]+$/.test(id))
     .slice(0, LAST_READ_BUDGET);
   const rows: LastReadRow[] = [];
-  const started = Date.now();
+  const now = options.now ?? Date.now;
+  const started = now();
+  const deadlineAt = options.deadlineAt ?? started + LAST_READ_TIMEOUT_MS;
   let limited: number | undefined;
   for (const channelId of requested) {
     if (limited !== undefined) {
@@ -237,22 +294,26 @@ export async function getLastReads(
       continue;
     }
     try {
-      const remaining = LAST_READ_TIMEOUT_MS - (Date.now() - started);
+      const remaining = deadlineAt - now();
       if (remaining <= 0)
         throw new SlackApiError(
           "timeout",
-          "既読位置の取得が時間切れになりました",
+          t("既読位置の取得が時間切れになりました"),
         );
       const data = await options.api(
         "conversations.info",
         { channel: channelId },
-        { timeoutMs: remaining },
+        {
+          timeoutMs: remaining,
+          deadlineAt,
+          source: options.source ?? "triage",
+        },
       );
       const channel = object(data.channel);
       if (channel.id !== channelId)
         throw new SlackApiError(
           "unreadable",
-          "既読位置の応答の会話IDが一致しません",
+          t("既読位置の応答の会話IDが一致しません"),
         );
       const ts = channel.last_read;
       rows.push(
@@ -285,8 +346,10 @@ export async function getLastReads(
             ),
           };
         }
-        if (error.kind === "rate_limited") {
-          limited = error.retryAfter ?? 60;
+        if (error.kind === "rate_limited" || error.kind === "deferred") {
+          limited = error.retryAt
+            ? Math.max(0, Math.ceil((error.retryAt - now()) / 1000))
+            : (error.retryAfter ?? 60);
           rows.push({
             channelId,
             lastRead: null,

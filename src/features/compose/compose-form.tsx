@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import {
   Action,
   ActionPanel,
@@ -22,10 +23,8 @@ import { PEOPLE, useDirectory } from "../../slack/directory.ts";
 import type { Session } from "../../slack/identity.ts";
 import { mentionCandidates, mentionLabel } from "../../slack/people.ts";
 import { postMarkdown } from "./post.ts";
-
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
-
 // Slack アプリで開く。開けなかったときは、その理由を返す
 async function tryOpen(link: string): Promise<string | undefined> {
   try {
@@ -35,7 +34,6 @@ async function tryOpen(link: string): Promise<string | undefined> {
     return errorMessage(error);
   }
 }
-
 // 会話・人へ投稿するフォーム。一覧の行の Write から開く。
 // 会話IDへ投稿し、人宛てはDMを開いてから送る。Slackが返したchannelとtsで投稿の位置を開く。
 // メッセージの行の Reply in Thread から開いたときは、thread_tsを指定してスレッドへ返信する。
@@ -54,7 +52,11 @@ export function ComposeForm({
   // 宛先の表示（#名前・@名前）
   destination: string;
   // スレッドへの返信のとき：スレッドの親の ts と、フォームに出す親メッセージの欄の見出しと説明（送信者・時刻・本文の先頭）
-  reply?: { threadTs: string; parentTitle: string; parent: string };
+  reply?: {
+    threadTs: string;
+    parentTitle: string;
+    parent: string;
+  };
   // 返信が届いたときに呼ぶ（元のメッセージの行に「開いた」の印を付ける）。送れたか未確認のとき・失敗したときは呼ばない
   onReplied?: () => void;
 }) {
@@ -72,7 +74,6 @@ export function ComposeForm({
   // 返信ならスレッドの親、それ以外は宛先の会話（決め方は confirmationOf）。トースト・1番目の操作・送り直しの確認で同じものを使う
   const { teamId } = session.display;
   const confirmation = confirmationOf(teamId, target, reply?.threadTs);
-
   // メンションの候補は、一覧と同じキャッシュから、この画面の中で読む。押した時点の一覧を受け取る形だと、
   // 人の取得中（初回は25秒ほど）に開いたフォームは、取得が終わっても候補が空のままになる。
   // 取得中なら、一覧が始めた取得を待ち、終わったら候補が入る
@@ -85,20 +86,18 @@ export function ComposeForm({
       )),
     [people.data],
   );
-
   async function send() {
     if (sending.current || !session.canFetch) return;
     if (message.trim() === "") {
-      setMessageError("本文を入力してください");
+      setMessageError(t("本文を入力してください"));
       return;
     }
     sending.current = true;
     setIsSending(true);
     const toast = await showToast({
       style: Toast.Style.Animated,
-      title: "投稿しています",
+      title: t("投稿しています"),
     });
-
     // 送信には signal を渡さない。送信中にフォームを閉じても最後まで行い、結果はこのトーストで出す
     const outcome = await postMarkdown({
       target,
@@ -108,7 +107,6 @@ export function ComposeForm({
       teamId,
       api: session.api,
     });
-
     // 返信が届いたら、元のメッセージの行に印を付ける。Slack を開いてウィンドウを閉じる前に、保存まで済ませる。
     // 印を付けられなくても、届いた投稿の結果は変えない（ここで止まると、送り直しで二重に投稿されうる）
     if (shouldMarkReplied(outcome, reply !== undefined)) {
@@ -118,64 +116,63 @@ export function ComposeForm({
         // 印は補助。付けられなかっただけ
       }
     }
-
     if (outcome.kind === "sent") {
       toast.style = Toast.Style.Success;
-      toast.title = "投稿しました";
+      toast.title = t("投稿しました");
       // 投稿の位置を Slack アプリで開く。開けなくても、投稿は届いている。
       // 送信済みの本文を送り直せないよう、このあとは送信中の状態のままにする
       const openError = await tryOpen(outcome.link);
-      if (openError) toast.message = `Slack を開けませんでした（${openError}）`;
+      if (openError)
+        toast.message = t("Slack を開けませんでした（{0}）", openError);
       await closeMainWindow({ clearRootSearch: true });
       await popToRoot({ clearSearchBar: true });
       return;
     }
-
     toast.style = Toast.Style.Failure;
     if (outcome.kind === "unconfirmed") {
       // 届いたかどうかが分からない。失敗と出すと送り直しで二重に投稿されうるので、送り直しは勧めず、
       // 確かめる場所（返信ならスレッドの親、それ以外は宛先の会話）を開けるようにする。本文は消さずに残す。
       // 1番目の操作もその場所を開く操作に替わり、送り直しは確認を挟む別の操作になる（下の actions）
       setUnconfirmed(true);
-      toast.title = "送れたか未確認です";
+      toast.title = t("送れたか未確認です");
       toast.message = outcome.message;
       toast.primaryAction = {
         title: confirmation.openTitle,
         onAction: async () => {
           const openError = await tryOpen(confirmation.link);
           if (openError) {
-            toast.message = `Slack を開けませんでした（${openError}）`;
+            toast.message = t("Slack を開けませんでした（{0}）", openError);
           }
         },
       };
     } else {
       // Slack が断った・引数の誤りなど、送る前に終わった失敗。入力を残して、直して送り直せるようにする
-      toast.title = "投稿に失敗しました";
+      toast.title = t("投稿に失敗しました");
       toast.message = outcome.message;
     }
     sending.current = false;
     setIsSending(false);
   }
-
   // 送れたか未確認になったあとの送り直し。前の投稿が届いていると、同じ投稿が二重になるので、確認を挟む。
   // 確認文は、確かめる場所（返信ならスレッドの親、それ以外は宛先の会話）を案内する
   async function sendAgain() {
     if (sending.current || !session.canFetch) return;
     const confirmed = await confirmAlert({
-      title: "もう一度送りますか？",
+      title: t("もう一度送りますか？"),
       message: confirmation.resendMessage,
       primaryAction: {
-        title: "Send Again",
+        title: t("Send Again"),
         style: Alert.ActionStyle.Destructive,
       },
     });
     if (confirmed) await send();
   }
-
   return (
     <Form
       navigationTitle={
-        reply ? `${destination} のスレッドに返信` : `${destination} に書く`
+        reply
+          ? t("{0} のスレッドに返信", destination)
+          : t("{0} に書く", destination)
       }
       isLoading={isSending || people.isLoading}
       actions={
@@ -191,25 +188,25 @@ export function ComposeForm({
           )}
           {unconfirmed ? (
             <Action
-              title="Send Again"
+              title={t("Send Again")}
               icon={Icon.ArrowClockwise}
               onAction={sendAgain}
             />
           ) : (
             <Action.SubmitForm
-              title="Post and Open in Slack"
+              title={t("Post and Open in Slack")}
               icon={Icon.ArrowNe}
               onSubmit={send}
             />
           )}
           <Action.Push
-            title="Preview"
+            title={t("Preview")}
             icon={Icon.Eye}
             shortcut={{ modifiers: ["cmd", "shift"], key: "p" }}
             target={
               <Detail
-                navigationTitle="プレビュー"
-                markdown={message.trim() === "" ? "_（本文なし）_" : message}
+                navigationTitle={t("プレビュー")}
+                markdown={message.trim() === "" ? t("_（本文なし）_") : message}
               />
             }
           />
@@ -217,13 +214,15 @@ export function ComposeForm({
       }
     >
       <Form.Description
-        title="宛先"
-        text={reply ? `${destination}（スレッドへの返信）` : destination}
+        title={t("宛先")}
+        text={reply ? t("{0}（スレッドへの返信）", destination) : destination}
       />
       {!session.canFetch && (
         <Form.Description
-          title="認証"
-          text="認証が完了していないため投稿できません。Slack Access Tokenを確認し、Slack Hubを開き直してください。"
+          title={t("認証")}
+          text={t(
+            "認証が完了していないため投稿できません。Slack Access Tokenを確認し、Slack Hubを開き直してください。",
+          )}
         />
       )}
       {reply && (
@@ -231,10 +230,10 @@ export function ComposeForm({
       )}
       <Form.TextArea
         id="message"
-        title="本文"
+        title={t("本文")}
         autoFocus
         enableMarkdown
-        placeholder="Markdown で書けます（⌘B 太字・⌘I 斜体・`コード`・- 箇条書き）"
+        placeholder={t("Markdown で書けます")}
         value={message}
         error={messageError}
         onChange={(value) => {
@@ -244,8 +243,10 @@ export function ComposeForm({
       />
       <Form.TagPicker
         id="mentionIds"
-        title="メンション"
-        placeholder="打つと名前・ハンドルで絞り込み（空ならメンションなし）"
+        title={t("メンション")}
+        placeholder={t(
+          "打つと名前・ハンドルで絞り込み（空ならメンションなし）",
+        )}
         value={mentionIds}
         onChange={setMentionIds}
       >

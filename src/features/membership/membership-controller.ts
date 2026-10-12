@@ -1,3 +1,5 @@
+import { recordRequestCacheHit } from "../../slack/request-context.ts";
+import { t } from "../../shared/i18n.ts";
 import { scopeKey, type Session } from "../../slack/identity.ts";
 import { SlackApiError } from "../../slack/slack-api.ts";
 import type { Conversation } from "../../shared/types.ts";
@@ -20,7 +22,6 @@ import {
   type MembershipState,
   type MembershipTarget,
 } from "./membership.ts";
-
 export class MembershipController {
   private generation = 0;
   private abort?: AbortController;
@@ -39,12 +40,10 @@ export class MembershipController {
     this.cache = cache;
     this.now = now;
   }
-
   cancel(): void {
     this.generation++;
     this.abort?.abort();
   }
-
   async load(
     session: Session,
     target: MembershipTarget,
@@ -77,7 +76,7 @@ export class MembershipController {
       update({
         status: "auth-required",
         data: [],
-        error: "Slackの認証を確認し、Hubを開き直してください",
+        error: t("Slackの認証を確認し、Hubを開き直してください"),
       });
       return;
     }
@@ -92,7 +91,10 @@ export class MembershipController {
       now: this.now,
     };
     const scope = scopeKey(session.fetchAs);
-    const pending: { key: string; entry: MembershipEntry }[] = [];
+    const pending: {
+      key: string;
+      entry: MembershipEntry;
+    }[] = [];
     let timer: ReturnType<typeof setTimeout> | undefined;
     let abortWait: (() => void) | undefined;
     try {
@@ -108,7 +110,10 @@ export class MembershipController {
           const cached = refresh
             ? undefined
             : this.cache.get(session.api, scope, entryKey, started);
-          if (cached) return cached;
+          if (cached) {
+            recordRequestCacheHit(session.api, "membership");
+            return cached;
+          }
           const data = await fetchData();
           checkRequest(request);
           const entry = { data, fetchedAt: this.now() };
@@ -128,7 +133,7 @@ export class MembershipController {
         )
           throw new SlackApiError(
             "configuration",
-            "参加者は重複なく1人から5人まで指定してください",
+            t("参加者は重複なく1人から5人まで指定してください"),
           );
         const entries: MembershipEntry[] = [];
         for (const id of ids)
@@ -147,14 +152,14 @@ export class MembershipController {
       // APIの取消を無視する実装でも、操作全体の待ち時間を制限する。
       const timeout = new Promise<never>((_resolve, reject) => {
         abortWait = () =>
-          reject(new SlackApiError("aborted", "通信を中断しました"));
+          reject(new SlackApiError("aborted", t("通信を中断しました")));
         controller.signal.addEventListener("abort", abortWait, { once: true });
         timer = setTimeout(
           () =>
             reject(
               new SlackApiError(
                 "timeout",
-                "参加関係の取得が時間切れになりました",
+                t("参加関係の取得が時間切れになりました"),
               ),
             ),
           MEMBERSHIP_TIMEOUT_MS,
@@ -172,21 +177,31 @@ export class MembershipController {
         update({ status: "idle", data: [] });
         return;
       }
-      if (error instanceof SlackApiError && error.kind === "rate_limited") {
+      if (
+        error instanceof SlackApiError &&
+        (error.kind === "rate_limited" || error.kind === "deferred")
+      ) {
         update({
           ...old,
-          status: "rate-limited",
-          retryAfter: error.retryAfter ?? 60,
-          error: "Slack APIの回数制限です。待ってからRefreshしてください",
+          status: error.kind === "deferred" ? "deferred" : "rate-limited",
+          retryAfter: error.retryAt
+            ? Math.max(0, Math.ceil((error.retryAt - this.now()) / 1000))
+            : (error.retryAfter ?? 60),
+          error:
+            error.kind === "deferred"
+              ? t("Slack APIの取得を延期しました")
+              : t("Slack APIの回数制限です。待ってからRefreshしてください"),
         });
       } else {
         // 任意の例外本文には認証情報が含まれうるため、画面へ渡さない。
         const message =
           error instanceof SlackApiError && error.kind === "timeout"
-            ? "参加関係の取得が時間切れになりました"
+            ? t("参加関係の取得が時間切れになりました")
             : error instanceof SlackApiError && error.code === "missing_scope"
-              ? "参加関係の取得に必要なSlackの権限がありません"
-              : "参加関係を取得できませんでした。Refreshで再試行してください";
+              ? t("参加関係の取得に必要なSlackの権限がありません")
+              : t(
+                  "参加関係を取得できませんでした。Refreshで再試行してください",
+                );
         update({ ...old, status: "failed", error: message });
       }
       controller.abort();

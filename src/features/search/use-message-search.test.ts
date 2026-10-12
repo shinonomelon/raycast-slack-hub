@@ -1,3 +1,4 @@
+import * as i18n from "../../shared/i18n.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -53,6 +54,7 @@ function harness() {
     {};
   const deps: Record<string, unknown> = {
     react,
+    "../../slack/request-context.ts": { getApiCredentialKey: () => undefined },
     "./gate-store.ts": {
       readAccountSearchPause: () => undefined,
       writeAccountSearchPause: (value: unknown) => value,
@@ -79,7 +81,7 @@ function harness() {
     ).outputText,
     {
       exports,
-      require: (id: string) => deps[id],
+      require: (id: string) => (id.endsWith("/i18n.ts") ? i18n : deps[id]),
       AbortController,
       Date,
       setTimeout: (fn: () => void) => {

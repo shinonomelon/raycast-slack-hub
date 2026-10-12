@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import {
   parseQuery,
   resolveQuery,
@@ -9,7 +10,6 @@ import {
   validSenderId,
   type ResolvedScope,
 } from "./model.ts";
-
 export type MessageSearchPlan = {
   queries: string[];
   resolvedQuery: string;
@@ -18,7 +18,6 @@ export type MessageSearchPlan = {
   canSearch: boolean;
   scope: ResolvedScope;
 };
-
 export function createMessageSearchPlan({
   text,
   scope,
@@ -58,7 +57,7 @@ export function createMessageSearchPlan({
     (scope.channelIds !== "all" &&
       scope.channelIds.some((id) => !validChannelId(id)))
   )
-    conflicts.push("検索条件のIDが不正です");
+    conflicts.push(t("検索条件のIDが不正です"));
   const positive = parseQuery(text).tokens.filter(
     (t) =>
       t.type === "filter" &&
@@ -72,14 +71,14 @@ export function createMessageSearchPlan({
           .length > 1,
     )
   )
-    conflicts.push("複数のin/from条件は選択条件と併用できません");
+    conflicts.push(t("複数のin/from条件は選択条件と併用できません"));
   // 括弧・ORによる結合は既存の単語resolverでは意味を保証できない。
   const unquoted = text.replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, "");
   const hasOr = parseQuery(unquoted).tokens.some(
     (token) => token.type === "text" && /^OR$/i.test(token.raw),
   );
   if (/[()]/.test(unquoted) || hasOr)
-    conflicts.push("括弧またはORの条件を修正してください");
+    conflicts.push(t("括弧またはORの条件を修正してください"));
   if (
     resolved.unresolved.some(
       (t) => t.modifier === "in" || t.modifier === "from",
@@ -88,9 +87,9 @@ export function createMessageSearchPlan({
       (resolved.completing.modifier === "in" ||
         resolved.completing.modifier === "from"))
   )
-    conflicts.push("in/from条件の対象を確定してください");
+    conflicts.push(t("in/from条件の対象を確定してください"));
   if (positive.some((token) => token.type === "filter" && !token.value.trim()))
-    conflicts.push("in/from条件の値を指定してください");
+    conflicts.push(t("in/from条件の値を指定してください"));
   if (conflicts.length) return finish([]);
   let channels = scope.channelIds;
   let senderId = scope.senderId;
@@ -120,7 +119,7 @@ export function createMessageSearchPlan({
       if (senderId && senderId !== id) empty = true;
       else senderId = id;
     } else {
-      conflicts.push("in/from条件を安全に解釈できません");
+      conflicts.push(t("in/from条件を安全に解釈できません"));
     }
   }
   if (empty || conflicts.length) return finish([], channels, senderId);
@@ -137,7 +136,6 @@ export function createMessageSearchPlan({
     senderId,
   );
 }
-
 export function createReplySearchPlan(
   scope: ResolvedScope,
   selfId: string,
@@ -152,7 +150,7 @@ export function createReplySearchPlan(
     (scope.channelIds !== "all" &&
       scope.channelIds.some((id) => !validChannelId(id)))
   )
-    throw new Error("検索計画の条件が不正です");
+    throw new Error(t("検索計画の条件が不正です"));
   const suffix = [
     `after:${afterDate}`,
     ...(beforeDate ? [`before:${beforeDate}`] : []),

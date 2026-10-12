@@ -1,3 +1,5 @@
+import { setLanguage, t } from "../../shared/i18n.ts";
+import { membershipStatus } from "./membership-view.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MembershipController } from "./membership-controller.ts";
@@ -245,5 +247,45 @@ for (const ids of [[], ["U2", "U2"], ["U1", "U2", "U3", "U4", "U5", "U6"]]) {
     );
     assert.equal(calls, 0);
     assert.equal(states.at(-1)?.status, "failed");
+  });
+}
+
+for (const language of ["ja", "en"] as const) {
+  test(`所属の未送信待機は旧結果を残し、延期として表示する ${language}`, async () => {
+    setLanguage(language);
+    try {
+      const states: MembershipState[] = [];
+      let paused = false;
+      const api: ApiCall = async (_method, _params, options) => {
+        assert.equal(options?.source, "membership");
+        assert.equal(options?.deadlineAt, 31000);
+        if (paused) {
+          const error = new SlackApiError("deferred", "wait", 60);
+          error.retryAt = 61000;
+          throw error;
+        }
+        return channels(["C1"]);
+      };
+      const controller = new MembershipController(
+        (state) => states.push(state),
+        new MembershipCache(),
+        () => 1000,
+      );
+      await controller.load(session(api), target());
+      paused = true;
+      await controller.load(session(api), target(), true);
+      assert.equal(states.at(-1)?.status, "deferred");
+      assert.equal(states.at(-1)?.retryAfter, 60);
+      assert.equal(states.at(-1)?.previous, true);
+      assert.equal(states.at(-1)?.data.length, 1);
+      assert.equal(states.at(-1)?.error, t("Slack APIの取得を延期しました"));
+      assert.ok(
+        membershipStatus(states.at(-1)!).includes(
+          t("Slack APIの取得を延期しました"),
+        ),
+      );
+    } finally {
+      setLanguage("ja");
+    }
   });
 }

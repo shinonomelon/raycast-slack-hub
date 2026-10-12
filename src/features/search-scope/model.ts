@@ -1,13 +1,23 @@
+import { t } from "../../shared/i18n.ts";
 import { createHash } from "node:crypto";
 import type { Conversation } from "../../shared/types.ts";
 import type { ChannelLibrary } from "../channel-library/model.ts";
-
 export type SearchScope = {
   range:
-    | { kind: "all" }
-    | { kind: "favorites" }
-    | { kind: "section"; sectionId: string }
-    | { kind: "channel"; channelId: string };
+    | {
+        kind: "all";
+      }
+    | {
+        kind: "favorites";
+      }
+    | {
+        kind: "section";
+        sectionId: string;
+      }
+    | {
+        kind: "channel";
+        channelId: string;
+      };
   senderId?: string;
 };
 export type ResolvedScope = {
@@ -18,7 +28,6 @@ export type ResolvedScope = {
 export const DEFAULT_SEARCH_SCOPE: SearchScope = { range: { kind: "all" } };
 export const validChannelId = (id: string) => /^[CG][A-Z0-9]+$/.test(id);
 export const validSenderId = (id: string) => /^[UW][A-Z0-9]+$/.test(id);
-
 export function scopeFingerprint(
   channelIds: "all" | readonly string[],
   senderId?: string,
@@ -34,7 +43,6 @@ export function scopeFingerprint(
     )
     .digest("hex");
 }
-
 export function resolveScope(
   scope: SearchScope,
   library: ChannelLibrary | undefined,
@@ -87,7 +95,6 @@ export function resolveScope(
     invalidSender,
   };
 }
-
 export function validateScopeSelection(
   scope: SearchScope,
   library: ChannelLibrary,
@@ -99,15 +106,15 @@ export function validateScopeSelection(
     range.kind === "section" &&
     !library.sections.some((s) => s.id === range.sectionId)
   )
-    return "セクションを選び直してください";
+    return t("セクションを選び直してください");
   if (
     range.kind === "channel" &&
     !conversations.some((c) => c.id === range.channelId && c.type !== "mpim")
   )
-    return "チャンネルを選び直してください";
+    return t("チャンネルを選び直してください");
   if (scope.senderId !== undefined && !validSenderId(scope.senderId))
-    return "投稿者を選び直してください";
+    return t("投稿者を選び直してください");
   if (showMessages && range.kind === "all" && !scope.senderId)
-    return "範囲または投稿者を指定してください";
+    return t("範囲または投稿者を指定してください");
   return undefined;
 }

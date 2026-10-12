@@ -1,3 +1,4 @@
+import * as i18n from "../../shared/i18n.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -11,7 +12,7 @@ import { scopeKey, type Session } from "../../slack/identity.ts";
 import type { ApiCall } from "../../slack/slack-api.ts";
 
 // 本物の取得器と停止ストアをつなぎ、画面の再作成とAPIクライアントの交代を再現する。
-function harness() {
+function harness(cause: gate.Pause["cause"] = "rate_limited") {
   let now = Date.now();
   class FakeDate extends Date {
     static now() {
@@ -54,6 +55,7 @@ function harness() {
       {
         exports,
         require: (id: string) => {
+          if (id.endsWith("/i18n.ts")) return i18n;
           assert.ok(id in deps, id);
           return deps[id];
         },
@@ -72,6 +74,7 @@ function harness() {
   const searches: { api: ApiCall; selfId: string }[] = [];
   const lastReads: { api: ApiCall; ids: readonly string[] }[] = [];
   let limited = true;
+  const toasts: { title: string }[] = [];
   const store = {
     loadTriage: () => undefined,
     saveTriage: () => {},
@@ -103,10 +106,17 @@ function harness() {
       useEffect: (fn: () => unknown) => effects.push(fn),
     },
     "@raycast/api": {
-      showToast: () => Promise.resolve(),
+      showToast: (value: { title: string }) => {
+        toasts.push(value);
+        return Promise.resolve();
+      },
       Toast: { Style: { Failure: "failure" } },
     },
     "../search/gate-store.ts": gateStore,
+    "../../slack/request-context.ts": {
+      getApiCredentialKey: () => undefined,
+      recordRequestCacheHit: () => {},
+    },
     "../../slack/identity.ts": { scopeKey },
     "./read-state.ts": { readStateOf: () => store },
     "./triage-fetch.ts": triageFetch,
@@ -123,9 +133,9 @@ function harness() {
             ? {
                 kind: "failed",
                 failure: {
-                  kind: "rate_limited",
+                  kind: cause,
                   message: "429",
-                  pause: { until: now + 60_000, cause: "rate_limited" },
+                  pause: { until: now + 60_000, cause },
                 },
               }
             : { kind: "ok", hits: [], capped: false },
@@ -155,6 +165,7 @@ function harness() {
       now += ms;
     },
     gateStore,
+    toasts,
     searches,
     lastReads,
   };
@@ -211,3 +222,26 @@ test("既存last-read停止を維持し、アカウント別検索停止と互�
   assert.equal(ui.gateStore.readPause!("last-read")?.until, until);
   assert.equal(ui.gateStore.readAccountSearchPause!("T1-U1"), undefined);
 });
+
+for (const language of ["ja", "en"] as const) {
+  test(`未送信の延期は回数制限や時間切れと区別して表示する ${language}`, async () => {
+    i18n.setLanguage(language);
+    try {
+      const ui = harness("deferred");
+      await ui.mount("T1-U1", () => Promise.resolve({}));
+      assert.ok(
+        ui.toasts.some(
+          (toast) => toast.title === i18n.t("Slack APIの取得を延期しました"),
+        ),
+      );
+      assert.ok(
+        ui.toasts.every(
+          (toast) =>
+            !/時間切れ|回数制限|timed out|rate limit/i.test(toast.title),
+        ),
+      );
+    } finally {
+      i18n.setLanguage("ja");
+    }
+  });
+}

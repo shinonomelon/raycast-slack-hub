@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import {
   Action,
   ActionPanel,
@@ -26,7 +27,7 @@ export function ChannelMembers({
   const [detail, setDetail] = useState(false);
   const hideDetails = detail ? (
     <Action
-      title="Hide Details"
+      title={t("Hide Details")}
       icon={Icon.Sidebar}
       shortcut={DETAILS_SHORTCUT}
       onAction={() => setDetail(false)}
@@ -39,14 +40,14 @@ export function ChannelMembers({
   );
   const refresh = context.session.canFetch ? (
     <Action
-      title="Refresh"
+      title={t("Refresh")}
       icon={Icon.ArrowClockwise}
       onAction={state.refresh}
     />
   ) : null;
   const preferences = (
     <Action
-      title="Open Extension Preferences"
+      title={t("Open Extension Preferences")}
       icon={Icon.Gear}
       onAction={openExtensionPreferences}
     />
@@ -66,8 +67,8 @@ export function ChannelMembers({
   );
   return (
     <List
-      navigationTitle={`#${channel.name} の参加者`}
-      searchBarPlaceholder="名前・ハンドルで絞り込む"
+      navigationTitle={t("#{0} の参加者", channel.name)}
+      searchBarPlaceholder={t("名前・ハンドルで絞り込む")}
       searchText={text}
       onSearchTextChange={setText}
       filtering={false}
@@ -77,20 +78,21 @@ export function ChannelMembers({
       <List.EmptyView
         title={
           state.status === "loading"
-            ? "参加者を取得中"
+            ? t("参加者を取得中")
             : state.status === "failed" ||
                 state.status === "rate-limited" ||
+                state.status === "deferred" ||
                 state.status === "auth-required"
-              ? "参加者を取得できません"
+              ? t("参加者を取得できません")
               : text
-                ? "名前に一致する参加者がいません"
-                : "参加者はいません"
+                ? t("名前に一致する参加者がいません")
+                : t("参加者はいません")
         }
         description={`#${channel.name}\n${membershipStatus(state)}`}
         actions={<ActionPanel>{fallbackControls}</ActionPanel>}
       />
       <List.Section
-        title={`#${channel.name} の参加者`}
+        title={t("#{0} の参加者", channel.name)}
         subtitle={membershipStatus(state)}
       >
         {rows.map((row) => (
@@ -111,7 +113,7 @@ export function ChannelMembers({
                 {row.actionable ? (
                   <>
                     <Action.Open
-                      title="Open in Slack"
+                      title={t("Open in Slack")}
                       target={slackAppUserLink(
                         context.session.display.teamId,
                         row.id,
@@ -119,13 +121,13 @@ export function ChannelMembers({
                       application="Slack"
                     />
                     <Action
-                      title={detail ? "Hide Details" : "Show Details"}
+                      title={detail ? t("Hide Details") : t("Show Details")}
                       icon={Icon.Sidebar}
                       shortcut={DETAILS_SHORTCUT}
                       onAction={() => setDetail((value) => !value)}
                     />
                     <Action.Push
-                      title="Write"
+                      title={t("Write")}
                       shortcut={WRITE_SHORTCUT}
                       target={
                         <ComposeForm
@@ -136,7 +138,7 @@ export function ChannelMembers({
                       }
                     />
                     <Action.Push
-                      title="View Channels with This Person"
+                      title={t("View Channels with This Person")}
                       icon={Icon.Hashtag}
                       target={
                         <PersonChannels context={context} personId={row.id} />

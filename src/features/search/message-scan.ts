@@ -1,10 +1,10 @@
+import { t } from "../../shared/i18n.ts";
 import { compareTs, type Hit } from "../../slack/hits.ts";
 import type { SearchPageOutcome } from "../../slack/slack.ts";
 import type { MessageSearchPlan } from "../search-scope/search-plan.ts";
 import type { Pause, SearchFailure } from "./search-gate.ts";
-
 export const MESSAGE_SEARCH_CALLS = 4;
-export const MESSAGE_SEARCH_ROUND_MS = 60_000;
+export const MESSAGE_SEARCH_ROUND_MS = 60000;
 export const MESSAGE_SEARCH_LIMIT = 400;
 export type MessageScanSnapshot = {
   asOf: string;
@@ -121,7 +121,7 @@ export function createMessageScan(
         }
         const task = tasks.shift()!;
         const timeoutMs = Math.min(
-          15_000,
+          15000,
           MESSAGE_SEARCH_ROUND_MS - (now() - started),
         );
         calls++;
@@ -139,7 +139,7 @@ export function createMessageScan(
             kind: "failed",
             failure: {
               kind: "error",
-              message: "検索に失敗しました。続きを取得で再試行できます",
+              message: t("検索に失敗しました。続きを取得で再試行できます"),
             },
           };
         }

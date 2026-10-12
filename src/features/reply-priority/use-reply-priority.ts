@@ -1,4 +1,10 @@
 import {
+  copyApiContext,
+  getApiCredentialKey,
+  recordRequestCacheHit,
+} from "../../slack/request-context.ts";
+import { t } from "../../shared/i18n.ts";
+import {
   readAccountSearchPause,
   writeAccountSearchPause,
 } from "../search/gate-store.ts";
@@ -23,7 +29,6 @@ import {
   replyBinding,
   REPLY_DECISION_NAMESPACE,
 } from "./reply-priority-cache.ts";
-
 const empty = (): ReplyScanSnapshot => ({
   candidates: [],
   asOf: "",
@@ -134,15 +139,16 @@ export function useReplyPriority(
       if (!guard())
         throw new SlackApiError(
           "configuration",
-          "認証設定が変わりました。Slack Hubを開き直してください",
+          t("認証設定が変わりました。Slack Hubを開き直してください"),
         );
       const result = await session.api(method, params, options);
       if (!guard())
-        throw new SlackApiError("aborted", "認証設定が変わりました");
+        throw new SlackApiError("aborted", t("認証設定が変わりました"));
       return result;
     },
     [session.api, guard],
   );
+  copyApiContext(session.api, api);
   const run = useCallback(
     async (fresh: boolean, preferCache = false) => {
       if (!guard()) return;
@@ -165,14 +171,20 @@ export function useReplyPriority(
             loadPause: () =>
               Math.max(
                 store.loadPause(),
-                readAccountSearchPause(scopeKey(session.display))?.until ?? 0,
+                readAccountSearchPause(
+                  getApiCredentialKey(session.api) ?? scopeKey(session.display),
+                )?.until ?? 0,
               ),
-            savePause: (until) => {
+            savePause: (until, method) => {
               store.savePause(until);
-              writeAccountSearchPause(scopeKey(session.display), {
-                until,
-                cause: "rate_limited",
-              });
+              if (method === "search.messages")
+                writeAccountSearchPause(
+                  getApiCredentialKey(session.api) ?? scopeKey(session.display),
+                  {
+                    until,
+                    cause: "rate_limited",
+                  },
+                );
             },
             onUpdate: (next) => {
               if (guard() && generation.current === id) setSnapshot(next);
@@ -183,6 +195,7 @@ export function useReplyPriority(
         );
         scan.current = opened.scan;
         setFromCache(opened.fromCache);
+        if (opened.fromCache) recordRequestCacheHit(api, "reply-priority");
         setCacheEpoch((current) => current + 1);
         if (opened.fromCache) {
           setSnapshot(opened.scan.snapshot());

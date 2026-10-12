@@ -1,3 +1,5 @@
+import { useThreadContext } from "../hub/use-thread-context.ts";
+import { t, getLocale } from "../../shared/i18n.ts";
 import {
   Action,
   ActionPanel,
@@ -21,64 +23,74 @@ export function ConversationMessages({
 }) {
   const [text, setText] = useState("");
   const [detail, setDetail] = useState(false);
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [, redraw] = useState(0);
   const expression = `in:<#${channel.id}>${text.trim() ? ` ${text.trim()}` : ""}`;
   const search = useMessageSearch(expression, context.session);
   const hits =
     context.session.canFetch && search.query === expression ? search.hits : [];
+  const threadDetail = useThreadContext(
+    context.session,
+    hits.find((hit) => hit.key === activeRowId),
+    detail,
+  );
   const common = (
     <>
       <Action
-        title="Refresh"
+        title={t("Refresh")}
         icon={Icon.ArrowClockwise}
         onAction={search.revalidate}
       />
       <Action
-        title="Open Extension Preferences"
+        title={t("Open Extension Preferences")}
         icon={Icon.Gear}
         onAction={openExtensionPreferences}
       />
     </>
   );
   const status = !context.session.canFetch
-    ? "認証を確認し、Hubを開き直してください"
+    ? t("認証を確認し、Hubを開き直してください")
     : search.status?.query === expression && search.status.kind === "failed"
       ? search.status.message
       : search.status?.query === expression && search.status.kind === "paused"
-        ? `検索を一時停止しています（${new Date(search.status.pause.until).toLocaleTimeString("ja-JP")}まで）`
+        ? t(
+            "検索を一時停止しています（{0}まで）",
+            new Date(search.status.pause.until).toLocaleTimeString(getLocale()),
+          )
         : search.isLoading
-          ? "検索中"
-          : "このチャンネルに一致するメッセージがありません";
+          ? t("検索中")
+          : t("このチャンネルに一致するメッセージがありません");
   return (
     <List
-      navigationTitle={`#${channel.name} 内を検索`}
-      searchBarPlaceholder="このチャンネル内のメッセージを検索"
+      navigationTitle={t("#{0} 内を検索", channel.name)}
+      searchBarPlaceholder={t("このチャンネル内のメッセージを検索")}
       searchText={text}
       onSearchTextChange={setText}
       filtering={false}
       isLoading={search.isLoading}
       isShowingDetail={detail}
+      onSelectionChange={setActiveRowId}
     >
       <List.EmptyView
         title={status}
-        description={`検索先: #${channel.name}`}
+        description={t("検索先: #{0}", channel.name)}
         actions={
           <ActionPanel>
             <Action
-              title="Refresh"
+              title={t("Refresh")}
               icon={Icon.ArrowClockwise}
               onAction={search.revalidate}
             />
             {detail ? (
               <Action
-                title="Hide Details"
+                title={t("Hide Details")}
                 icon={Icon.Sidebar}
                 shortcut={DETAILS_SHORTCUT}
                 onAction={() => setDetail(false)}
               />
             ) : null}
             <Action
-              title="Open Extension Preferences"
+              title={t("Open Extension Preferences")}
               icon={Icon.Gear}
               onAction={openExtensionPreferences}
             />
@@ -95,6 +107,9 @@ export function ConversationMessages({
           state={context.isMarked(hit) ? "handled" : undefined}
           marked={context.isMarked(hit)}
           showDetail={detail}
+          threadDetail={
+            detail && hit.key === activeRowId ? threadDetail : undefined
+          }
           onToggleDetail={() => setDetail((value) => !value)}
           conversationFilter={undefined}
           senderFilter={

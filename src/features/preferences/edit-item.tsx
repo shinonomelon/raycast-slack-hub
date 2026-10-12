@@ -1,5 +1,5 @@
+import { t } from "../../shared/i18n.ts";
 import { Action, ActionPanel, Form, useNavigation } from "@raycast/api";
-
 // 項目ごとの別名を編集するフォーム。カンマ（全角の読点も可）で区切って複数入れられる
 export function EditAliases({
   title,
@@ -13,11 +13,11 @@ export function EditAliases({
   const { pop } = useNavigation();
   return (
     <Form
-      navigationTitle={`${title} の別名`}
+      navigationTitle={t("{0} の別名", title)}
       actions={
         <ActionPanel>
           <Action.SubmitForm
-            title="Save"
+            title={t("Save")}
             onSubmit={(values: { aliases: string }) => {
               const next = [
                 ...new Set(
@@ -36,10 +36,12 @@ export function EditAliases({
     >
       <Form.TextField
         id="aliases"
-        title="別名"
-        placeholder="分報, times"
+        title={t("別名")}
+        placeholder={t("分報, times")}
         defaultValue={aliases.join(", ")}
-        info="この名前でも検索に当たるようになります。空にすると別名を消します"
+        info={t(
+          "この名前でも検索に当たるようになります。空にすると別名を消します",
+        )}
       />
     </Form>
   );

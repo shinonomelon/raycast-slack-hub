@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import {
   Action,
   ActionPanel,
@@ -11,20 +12,19 @@ import {
 } from "@raycast/api";
 import { useState } from "react";
 import { normalize, type DictionaryRule } from "../search/search.ts";
-
 function AddRule({ onSubmit }: { onSubmit: (rule: DictionaryRule) => void }) {
   const { pop } = useNavigation();
   const [fromError, setFromError] = useState<string>();
   return (
     <Form
-      navigationTitle="置き換えを追加"
+      navigationTitle={t("置き換えを追加")}
       actions={
         <ActionPanel>
           <Action.SubmitForm
-            title="Add"
+            title={t("Add")}
             onSubmit={(values: { from: string; to: string }) => {
               if (!values.from.trim()) {
-                setFromError("置き換える語を入れてください");
+                setFromError(t("置き換える語を入れてください"));
                 return;
               }
               onSubmit({ from: values.from.trim(), to: values.to.trim() });
@@ -36,17 +36,20 @@ function AddRule({ onSubmit }: { onSubmit: (rule: DictionaryRule) => void }) {
     >
       <Form.TextField
         id="from"
-        title="チャンネル名の語"
-        placeholder="ドキュメント"
+        title={t("チャンネル名の語")}
+        placeholder={t("ドキュメント")}
         error={fromError}
         onChange={() => setFromError(undefined)}
       />
-      <Form.TextField id="to" title="自分の呼び方" placeholder="docs" />
-      <Form.Description text="チャンネル名やグループDMの名前に含まれる語を置き換えた名前でも、検索に当たるようになります。例: ドキュメント → docsで、docsからドキュメントの名前を探せます" />
+      <Form.TextField id="to" title={t("自分の呼び方")} placeholder="docs" />
+      <Form.Description
+        text={t(
+          "チャンネル名やグループDMの名前に含まれる語を置き換えた名前でも、検索に当たるようになります。例: ドキュメント \u2192 docsで、docsからドキュメントの名前を探せます",
+        )}
+      />
     </Form>
   );
 }
-
 // 名前の置き換え辞書の一覧。規則ごとに、当たるチャンネルの数を出す
 export function Dictionary({
   rules: initialRules,
@@ -60,26 +63,25 @@ export function Dictionary({
   // 押し出された画面は親の再描画を受けないので、自分でも規則を持つ
   const [rules, setRules] = useState<DictionaryRule[]>([...initialRules]);
   const normalizedNames = names.map(normalize);
-
   const update = (next: DictionaryRule[]) => {
     setRules(next);
     onChange(next);
   };
-
   const addAction = (
     <Action.Push
-      title="Add Rule"
+      title={t("Add Rule")}
       icon={Icon.Plus}
       shortcut={Keyboard.Shortcut.Common.New}
       target={<AddRule onSubmit={(rule) => update([...rules, rule])} />}
     />
   );
-
   return (
-    <List navigationTitle="名前の置き換え辞書">
+    <List navigationTitle={t("名前の置き換え辞書")}>
       <List.EmptyView
-        title="置き換えはまだありません"
-        description="ActionsのAdd Ruleで追加します（例: ドキュメント → docs）"
+        title={t("置き換えはまだありません")}
+        description={t(
+          "ActionsのAdd Ruleで追加します（例: ドキュメント \u2192 docs）",
+        )}
         actions={<ActionPanel>{addAction}</ActionPanel>}
       />
       {rules.map((rule, index) => {
@@ -89,20 +91,24 @@ export function Dictionary({
           <List.Item
             key={`${rule.from}-${index}`}
             title={`${rule.from} → ${rule.to}`}
-            accessories={[{ text: `${hits} 件` }]}
+            accessories={[{ text: t("{0} 件", hits) }]}
             actions={
               <ActionPanel>
                 {addAction}
                 <Action
-                  title="Delete Rule"
+                  title={t("Delete Rule")}
                   icon={Icon.Trash}
                   style={Action.Style.Destructive}
                   shortcut={{ modifiers: ["ctrl"], key: "x" }}
                   onAction={async () => {
                     const ok = await confirmAlert({
-                      title: `${rule.from} → ${rule.to} を消しますか`,
+                      title: t(
+                        "{0} \u2192 {1} を消しますか",
+                        rule.from,
+                        rule.to,
+                      ),
                       primaryAction: {
-                        title: "Delete",
+                        title: t("Delete"),
                         style: Alert.ActionStyle.Destructive,
                       },
                     });

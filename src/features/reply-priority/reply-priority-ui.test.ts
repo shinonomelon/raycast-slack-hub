@@ -1,3 +1,4 @@
+import * as i18n from "../../shared/i18n.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -13,6 +14,7 @@ function harness(restored = false, withScope = false) {
   const slots: unknown[] = [];
   let cursor = 0;
   let consent = false;
+  const dialogs: { title: string; message: string }[] = [];
   let valid = true;
   let scoring = 0;
   let refreshes = 0;
@@ -110,7 +112,10 @@ function harness(restored = false, withScope = false) {
     Action: Object.assign("Action", { Open: "Open" }),
     ActionPanel: "ActionPanel",
     Alert: { ActionStyle: { Default: "default" } },
-    confirmAlert: async () => consent,
+    confirmAlert: async (dialog: { title: string; message: string }) => {
+      dialogs.push(dialog);
+      return consent;
+    },
     Icon: {},
     Keyboard: { Shortcut: { Common: { Refresh: {} } } },
     List: Object.assign("List", {
@@ -187,7 +192,8 @@ function harness(restored = false, withScope = false) {
   const exports: Record<string, (props: unknown) => Node> = {};
   runInNewContext(compiled, {
     exports,
-    require: (id: string) => deps[id] ?? {},
+    require: (id: string) =>
+      id.endsWith("/i18n.ts") ? i18n : (deps[id] ?? {}),
     AbortController,
     Date,
     Map,
@@ -218,7 +224,10 @@ function harness(restored = false, withScope = false) {
     return [node, ...Object.values(node.props).flatMap(nodes)];
   }
   const action = (title: string) => {
-    const match = nodes(tree).find((node) => node.props.title === title);
+    const match = nodes(tree).find(
+      (node) =>
+        node.props.title === i18n.t(title as Parameters<typeof i18n.t>[0]),
+    );
     assert.ok(
       match,
       title + JSON.stringify(nodes(tree).filter((n) => n.type === "Empty")),
@@ -228,6 +237,7 @@ function harness(restored = false, withScope = false) {
   return {
     render,
     action,
+    dialogs,
     nodes: () => nodes(tree),
     source,
     pushed,
@@ -449,7 +459,13 @@ test("行のReturnはSlackを開き、cmdReturn詳細・返信・不要・延期
         },
       },
     ).outputText,
-    { exports, require: (id: string) => deps[id] ?? {}, Date, Math },
+    {
+      exports,
+      require: (id: string) =>
+        id.endsWith("/i18n.ts") ? i18n : (deps[id] ?? {}),
+      Date,
+      Math,
+    },
   );
   const called: string[] = [];
   const props = {
@@ -506,8 +522,10 @@ test("行のReturnはSlackを開き、cmdReturn詳細・返信・不要・延期
     "あとで対応・翌朝9時",
   ]) {
     (
-      visible.find((node) => node.props.title === title)!.props
-        .onAction as () => void
+      visible.find(
+        (node) =>
+          node.props.title === i18n.t(title as Parameters<typeof i18n.t>[0]),
+      )!.props.onAction as () => void
     )();
   }
   assert.deepEqual(called, ["detail", "reply", "dismiss", "hour", "tomorrow"]);
@@ -562,6 +580,54 @@ test("候補があるAI失敗画面に再試行の案内を出し、通常説明
   ])
     assert.equal(text.includes(removed), false);
 });
+
+for (const language of ["ja", "en"] as const) {
+  test(`${language}: AI失敗・認証失敗・中断の案内を候補と一緒に表示する`, async () => {
+    try {
+      i18n.setLanguage(language);
+      for (const scenario of ["failure", "auth", "abort"] as const) {
+        const ui = harness();
+        ui.render();
+        ui.accept();
+        ui.action("AIで並べる・再試行");
+        await new Promise(setImmediate);
+        ui.render();
+        if (scenario === "failure") ui.fail();
+        else if (scenario === "auth") ui.failAuth();
+        else ui.action("AI判定を中断");
+        await new Promise(setImmediate);
+        ui.render();
+        const expected =
+          scenario === "failure"
+            ? "AI判定できませんでした。再試行できます"
+            : scenario === "auth"
+              ? "TypeSafeの認証に失敗しました。設定のAPI Keyを確認・更新してからSlack Hubを開き直してください"
+              : "AI判定を中断しました。再試行できます";
+        assert.equal(
+          ui.nodes().find((node) => node.props.id === "reply-priority-problem")
+            ?.props.title,
+          i18n.t(expected),
+          scenario,
+        );
+        assert.ok(ui.nodes().some((node) => node.type === "Row"));
+      }
+      const ui = harness();
+      ui.render();
+      ui.accept();
+      ui.action("AIで並べる・再試行");
+      await new Promise(setImmediate);
+      ui.complete();
+      await new Promise(setImmediate);
+      ui.render();
+      assert.equal(
+        ui.nodes().some((node) => node.props.id === "reply-priority-problem"),
+        false,
+      );
+    } finally {
+      i18n.setLanguage("ja");
+    }
+  });
+}
 
 test("Slack429は候補と再開時刻を表示し、待機中Continueで取得0", () => {
   const ui = harness();
@@ -706,4 +772,29 @@ test("管理で作成した新セクションの適用も最新libraryで同一�
   ui.render();
   ui.action("続きを確認");
   assert.equal(ui.continues, 1);
+});
+
+test("英語の返信待ちは一覧・Actions・送信同意を英語にし、同意拒否なら送信しない", async () => {
+  try {
+    i18n.setLanguage("en");
+    const ui = harness();
+    const tree = ui.render();
+    assert.ok(String(tree.props.navigationTitle).startsWith("Awaiting Reply"));
+    const titles = ui.nodes().map((node) => node.props.title);
+    for (const title of [
+      "Fetch Status",
+      "Reload Reply Candidates",
+      "Continue Checking",
+      "Sort with AI / Retry",
+      "Open Extension Preferences",
+    ])
+      assert.ok(titles.includes(title), title);
+    await ui.action("AIで並べる・再試行");
+    assert.equal(ui.dialogs[0].title, "Send conversation text to TypeSafe?");
+    assert.ok(ui.dialogs[0].message.includes("Slack tokens are not sent"));
+    assert.ok(!/[ぁ-んァ-ヶ一-龠]/.test(ui.dialogs[0].message));
+    assert.equal(ui.scoring, 0);
+  } finally {
+    i18n.setLanguage("ja");
+  }
 });

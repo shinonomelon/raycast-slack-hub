@@ -1,3 +1,4 @@
+import { t, getLocale } from "../../shared/i18n.ts";
 import { Action, ActionPanel, Color, Icon, Keyboard, List } from "@raycast/api";
 import type { ReactNode } from "react";
 import { ComposeForm } from "../compose/compose-form.tsx";
@@ -9,7 +10,8 @@ import {
 import { messageLink, type Hit } from "../../slack/hits.ts";
 import type { Session } from "../../slack/identity.ts";
 import { toPlain } from "../../slack/mrkdwn.ts";
-import { messageDetailBody } from "./message-detail.ts";
+import { messageDetailMarkdown } from "./message-detail.ts";
+import type { ThreadDetail } from "./use-thread-context.ts";
 import type { Names } from "../../slack/names.ts";
 import {
   DETAILS_SHORTCUT,
@@ -22,31 +24,39 @@ import type { MembershipContext } from "../membership/membership-context.ts";
 import { PersonChannels } from "../membership/person-channels.tsx";
 import { ChannelMembers } from "../membership/channel-members.tsx";
 import type { ReadState } from "../triage/triage.ts";
-
 // 読んだかの印。空欄の自分宛ての行と、対応済みの印が付いた検索結果の行に出す
 const STATE_ACCESSORIES: Record<ReadState, List.Item.Accessory> = {
   unread: {
     icon: { source: Icon.CircleFilled, tintColor: Color.Red },
-    tooltip: "未読",
+    get tooltip() {
+      return t("未読");
+    },
   },
   read: {
     icon: { source: Icon.Circle, tintColor: Color.SecondaryText },
-    tooltip: "既読",
+    get tooltip() {
+      return t("既読");
+    },
   },
   thread: {
     icon: { source: Icon.SpeechBubble, tintColor: Color.Blue },
-    tooltip: "スレッド返信（既読かどうかは判定しない）",
+    get tooltip() {
+      return t("スレッド返信（既読かどうかは判定しない）");
+    },
   },
   unknown: {
     icon: { source: Icon.QuestionMarkCircle, tintColor: Color.SecondaryText },
-    tooltip: "未確認（既読位置を取れていない）",
+    get tooltip() {
+      return t("未確認（既読位置を取れていない）");
+    },
   },
   handled: {
     icon: { source: Icon.CheckCircle, tintColor: Color.Green },
-    tooltip: "開いた・対応済み",
+    get tooltip() {
+      return t("開いた・対応済み");
+    },
   },
 };
-
 // メッセージの行。空欄の一覧の自分宛てと、検索結果で使う。List.Section の中に置ける。
 // ↵ で Slack を開き、⌘↵ で詳細を出す・閉じる。詳細だけでは開いた印を付けない。
 export function MessageRow({
@@ -67,6 +77,7 @@ export function MessageRow({
   common,
   membershipContext,
   detailText,
+  threadDetail,
   replyEnabled = true,
 }: {
   // 自分の情報。Slack で開くリンクのワークスペースの ID（session.display.teamId）と、返信のフォームに使う
@@ -98,6 +109,7 @@ export function MessageRow({
   membershipContext?: MembershipContext;
   // 履歴・スレッドの全文。指定がなければHitの本文を使う。
   detailText?: string;
+  threadDetail?: ThreadDetail;
   // 親を解決できていない新しいスレッド画面では、返信を開かない。
   replyEnabled?: boolean;
 }) {
@@ -108,45 +120,69 @@ export function MessageRow({
   const label = names.conversationLabel(hit);
   const date = new Date(Number(hit.ts.split(".")[0]) * 1000);
   // スレッドへの返信。送り先はこのメッセージのある会話で、親はこのメッセージのスレッド（返信なら、その親）
-  const { target, threadTs } = replyTargetOf(hit);
+  const replyHit = threadDetail?.data?.isThread
+    ? { ...hit, threadTs: threadDetail.data.rootTs }
+    : hit;
+  const { target, threadTs } = replyTargetOf(replyHit);
   const parent = replyParentText({
     sender,
-    time: date.toLocaleString("ja-JP"),
-    body: toPlain(detailText ?? hit.text, names.lookup),
+    time: date.toLocaleString(getLocale()),
+    body: toPlain(
+      detailText ??
+        threadDetail?.data?.messages.find((item) => item.ts === hit.ts)?.text ??
+        hit.text,
+      names.lookup,
+    ),
   });
   return (
     <List.Item
       id={id}
-      title={toPlain(hit.text, names.lookup) || "（本文なし）"}
+      title={toPlain(hit.text, names.lookup) || t("（本文なし）")}
       subtitle={showDetail ? undefined : label}
       accessories={[
         ...(state ? [STATE_ACCESSORIES[state]] : []),
         ...(showDetail ? [] : [{ text: sender }]),
-        { date, tooltip: date.toLocaleString("ja-JP") },
+        { date, tooltip: date.toLocaleString(getLocale()) },
       ]}
       detail={
         <List.Item.Detail
-          markdown={`**${sender}** · ${label} · ${date.toLocaleString("ja-JP")}\n\n${messageDetailBody(hit, names.lookup, detailText)}`}
+          markdown={messageDetailMarkdown(hit, names, detailText, threadDetail)}
         />
       }
       actions={
         <ActionPanel>
           <Action.Open
-            title="Open in Slack"
+            title={t("Open in Slack")}
             icon={Icon.ArrowRight}
-            target={messageLink(session.display.teamId, hit)}
+            target={messageLink(session.display.teamId, replyHit)}
             application="Slack"
             onOpen={onOpen}
           />
           <Action
-            title={showDetail ? "Hide Details" : "Show Details"}
+            title={showDetail ? t("Hide Details") : t("Show Details")}
             icon={Icon.Sidebar}
             shortcut={DETAILS_SHORTCUT}
             onAction={onToggleDetail}
           />
+          {threadDetail ? (
+            <>
+              {threadDetail.data?.cursor && !threadDetail.loading ? (
+                <Action
+                  title={t("過去の投稿をさらに取得")}
+                  icon={Icon.ArrowDown}
+                  onAction={threadDetail.more}
+                />
+              ) : null}
+              <Action
+                title={t("詳細を更新")}
+                icon={Icon.ArrowClockwise}
+                onAction={threadDetail.refresh}
+              />
+            </>
+          ) : null}
           {replyEnabled ? (
             <Action.Push
-              title="Reply in Thread"
+              title={t("Reply in Thread")}
               icon={Icon.Reply}
               shortcut={REPLY_SHORTCUT}
               target={
@@ -156,7 +192,7 @@ export function MessageRow({
                   destination={label}
                   reply={{
                     threadTs,
-                    parentTitle: replyParentTitle(hit),
+                    parentTitle: replyParentTitle(replyHit),
                     parent,
                   }}
                   onReplied={onReplied}
@@ -165,14 +201,14 @@ export function MessageRow({
             />
           ) : null}
           <Action
-            title={marked ? "Unmark as Handled" : "Mark as Handled"}
+            title={marked ? t("Unmark as Handled") : t("Mark as Handled")}
             icon={marked ? Icon.Circle : Icon.CheckCircle}
             shortcut={HANDLED_SHORTCUT}
             onAction={onToggleHandled}
           />
           {conversationFilter ? (
             <Action
-              title="Filter by This Conversation"
+              title={t("Filter by This Conversation")}
               icon={Icon.Filter}
               shortcut={FILTER_SHORTCUT}
               onAction={() => onFilter(conversationFilter)}
@@ -180,7 +216,7 @@ export function MessageRow({
           ) : null}
           {conversationFilter ? (
             <Action
-              title="Filter by This Conversation"
+              title={t("Filter by This Conversation")}
               icon={Icon.Filter}
               shortcut={FILTER_SHORTCUT_ALT}
               onAction={() => onFilter(conversationFilter)}
@@ -188,28 +224,28 @@ export function MessageRow({
           ) : null}
           {senderFilter ? (
             <Action
-              title="Filter by Sender"
+              title={t("Filter by Sender")}
               icon={Icon.Person}
               onAction={() => onFilter(senderFilter)}
             />
           ) : null}
           {hit.permalink ? (
             <Action.OpenInBrowser
-              title="Open Permalink in Browser"
+              title={t("Open Permalink in Browser")}
               url={hit.permalink}
               shortcut={Keyboard.Shortcut.Common.Open}
             />
           ) : null}
           {hit.permalink ? (
             <Action.CopyToClipboard
-              title="Copy Permalink"
+              title={t("Copy Permalink")}
               content={hit.permalink}
               shortcut={Keyboard.Shortcut.Common.Copy}
             />
           ) : null}
           {membershipContext?.session.canFetch && person ? (
             <Action.Push
-              title="View Channels with Sender"
+              title={t("View Channels with Sender")}
               icon={Icon.Hashtag}
               target={
                 <PersonChannels
@@ -222,7 +258,7 @@ export function MessageRow({
           {membershipContext?.session.canFetch &&
           (hit.channelKind === "channel" || hit.channelKind === "private") ? (
             <Action.Push
-              title="View Channel Members"
+              title={t("View Channel Members")}
               icon={Icon.TwoPeople}
               target={
                 <ChannelMembers

@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 // 本文はメモリ内で変換し、公式APIへ渡す。一時ファイルも外部プロセスも使わない。
 import {
   classifySendError,
@@ -27,7 +28,10 @@ export async function postMarkdown(params: {
     !params.markdown.trim() ||
     (params.threadTs !== undefined && !/^\d{10}\.\d{6}$/.test(params.threadTs))
   )
-    return { kind: "failed", message: "宛先と本文を確認してください" };
+    return {
+      kind: "failed",
+      message: t("宛先と本文を確認してください"),
+    };
   let blocks: ReturnType<typeof toBlocks>;
   let text: string;
   try {
@@ -38,7 +42,10 @@ export async function postMarkdown(params: {
   } catch (error) {
     if (error instanceof MessageLimitError)
       return { kind: "failed", message: error.message };
-    return { kind: "failed", message: "本文を変換できませんでした" };
+    return {
+      kind: "failed",
+      message: t("本文を変換できませんでした"),
+    };
   }
   const started = Date.now();
   let channel = params.target.id;
@@ -47,23 +54,33 @@ export async function postMarkdown(params: {
       const opened = await params.api(
         "conversations.open",
         { users: channel },
-        { timeoutMs: SEND_TIMEOUT_MS },
+        {
+          timeoutMs: SEND_TIMEOUT_MS,
+          deadlineAt: started + SEND_TIMEOUT_MS,
+          source: "post",
+          dedupe: false,
+        },
       );
       const id = object(opened.channel).id;
       if (typeof id !== "string" || !/^D[A-Z0-9]+$/.test(id))
         return {
           kind: "failed",
-          message: "DMの会話IDを取得できませんでした。投稿は送信していません",
+          message: t(
+            "DMの会話IDを取得できませんでした。投稿は送信していません",
+          ),
         };
       channel = id;
     } catch (error) {
       const reason =
         error instanceof SlackApiError
           ? error.message
-          : "トークンとim:write権限を確認してください";
+          : t("トークンとim:write権限を確認してください");
       return {
         kind: "failed",
-        message: `DMを開けませんでした（${reason}）。投稿は送信していません`,
+        message: t(
+          "DMを開けませんでした（{0}）。投稿は送信していません",
+          reason,
+        ),
       };
     }
   }
@@ -72,7 +89,7 @@ export async function postMarkdown(params: {
     if (remaining <= 0)
       return {
         kind: "failed",
-        message: "DMの取得が時間切れになりました。投稿は送信していません",
+        message: t("DMの取得が時間切れになりました。投稿は送信していません"),
       };
     // 再試行も画面を閉じたことによる中断も行わず、二重投稿を防ぐ。
     const data = await params.api(
@@ -83,7 +100,12 @@ export async function postMarkdown(params: {
         blocks,
         ...(params.threadTs ? { thread_ts: params.threadTs } : {}),
       },
-      { timeoutMs: remaining },
+      {
+        timeoutMs: remaining,
+        deadlineAt: started + SEND_TIMEOUT_MS,
+        source: "post",
+        dedupe: false,
+      },
     );
     return classifySendResponse(params.teamId, data, params.threadTs);
   } catch (error) {

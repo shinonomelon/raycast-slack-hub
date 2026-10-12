@@ -1,3 +1,8 @@
+import {
+  getApiCredentialKey,
+  recordRequestCacheHit,
+} from "../../slack/request-context.ts";
+import { t, getLocale } from "../../shared/i18n.ts";
 import { showToast, Toast } from "@raycast/api";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -42,13 +47,11 @@ import {
   unreadTags,
   type UnreadTag,
 } from "./unread-tags.ts";
-
 // 取得の本体は triage-fetch.ts。ここでは、保存（read-state）・止める期限（gate-store）・Slack API をつなぐ。
 // 取得は、人（ワークスペースと自分の ID）ごとに、モジュールで1つだけ動かす
 // （画面が重なって開かれても、ray develop で開いたときの処理が2回走っても、検索は重ならない）。
 // 保存と検索の停止期限は、その人の名前空間。既読位置の停止期限は、拡張で共通。
 const fetchersByClient = new WeakMap<ApiCall, Map<string, TriageFetchers>>();
-
 function fetchersOf(identity: Identity, api: ApiCall): TriageFetchers {
   const scope = scopeKey(identity);
   let fetchersByScope = fetchersByClient.get(api);
@@ -59,17 +62,19 @@ function fetchersOf(identity: Identity, api: ApiCall): TriageFetchers {
   let fetchers = fetchersByScope.get(scope);
   if (!fetchers) {
     const store = readStateOf(identity);
+    const gateScope = getApiCredentialKey(api) ?? scope;
     fetchers = createTriageFetchers({
       selfId: identity.userId,
+      onCacheHit: () => recordRequestCacheHit(api, "triage"),
       now: Date.now,
       readPause: (kind, now) =>
         kind === "search"
-          ? readAccountSearchPause(scope, now)
-          : readPause(kind, now),
+          ? readAccountSearchPause(gateScope, now)
+          : readPause(kind, now, gateScope),
       writePause: (kind, pause) =>
         kind === "search"
-          ? writeAccountSearchPause(scope, pause)
-          : writePause(kind, pause),
+          ? writeAccountSearchPause(gateScope, pause)
+          : writePause(kind, pause, gateScope),
       loadTriage: store.loadTriage,
       saveTriage: store.saveTriage,
       loadFavoriteHits: store.loadFavoriteHits,
@@ -84,28 +89,42 @@ function fetchersOf(identity: Identity, api: ApiCall): TriageFetchers {
           ...options,
           api,
           selfId: identity.userId,
+          source: "triage",
+          deadlineAt: Date.now() + 15000,
         }),
-      getLastReads: (ids) => getLastReads(ids, { api }),
+      getLastReads: (ids) =>
+        getLastReads(ids, {
+          api,
+          source: "triage",
+          deadlineAt: Date.now() + 30000,
+        }),
     });
     fetchersByScope.set(scope, fetchers);
   }
   return fetchers;
 }
-
 // ---- 画面に出すお知らせ --------------------------------------------------------------
-
 // 止めた・失敗したことを、トーストで知らせる（what はお知らせの主語）。
 // 本文は出さない（Slack API のエラー文と、止める時刻だけ）
 function notify(stop: Stop, what: string): void {
   const text =
     stop.kind === "failed"
-      ? { title: `${what}を取得できませんでした`, message: stop.message }
+      ? {
+          title: t("{0}を取得できませんでした", what),
+          message: stop.message,
+        }
       : {
           title:
             stop.pause.cause === "rate_limited"
-              ? "Slack の回数制限に当たりました"
-              : "Slack への問い合わせが時間切れでした",
-          message: `${new Date(stop.pause.until).toLocaleTimeString("ja-JP")} まで${what}の取得を止めます（そのあと、Reload Searchで取り直せます）`,
+              ? t("Slack の回数制限に当たりました")
+              : stop.pause.cause === "deferred"
+                ? t("Slack APIの取得を延期しました")
+                : t("Slack への問い合わせが時間切れでした"),
+          message: t(
+            "{0} まで{1}の取得を止めます（そのあと、Reload Searchで取り直せます）",
+            new Date(stop.pause.until).toLocaleTimeString(getLocale()),
+            what,
+          ),
         };
   try {
     void showToast({ style: Toast.Style.Failure, ...text }).catch(
@@ -115,9 +134,7 @@ function notify(stop: Stop, what: string): void {
     // 知らせられなかっただけで、取得の結果は変わらない
   }
 }
-
 // ---- フック ---------------------------------------------------------------------------
-
 export type Triage = {
   // 空欄の一覧に出す自分宛ての行（新しい順）。開いたときの判定で未読・スレッド・判定できないものだけで、
   // 印（開いた・対応済み）の付いたものは出ない。開いている間に既読になった行は、印だけ変えて残る
@@ -146,7 +163,6 @@ export type Triage = {
   // ⌘⇧D：印を付け外しする。印が付いた行は、空欄の一覧からすぐ消える
   toggleHandled: (hit: Hit) => void;
 };
-
 // 自分宛てのメッセージの整理と、会話の未読タグ。
 // 開いたときに、前回の結果をすぐ出し、新しくなければ裏で取り直す。取り直しは、開いたときと ⌘R のときだけ。
 // 前回の結果は、その人（session.display）の保存から出す。Slack から取って保存するのは、今回の auth.test が成功したとき
@@ -174,7 +190,6 @@ export function useTriage(params: {
   );
   const favoriteKey = favoriteList.join(",");
   const favoriteSet = useMemo(() => new Set(favoriteList), [favoriteList]);
-
   // 開いたときの保存（前回の結果・既読位置・開いた会話）。すぐ出す。開いたときの未読の組もここで決める
   const [initial] = useState(() => {
     const entry = store.loadTriage();
@@ -221,13 +236,11 @@ export function useTriage(params: {
   const handledResets = useRef(0);
   // この表示で、個別の確かめに出した会話の ID。選び直しで確かめる組が変わっても、1回の表示で3会話までに守る
   const requestedChecks = useRef(new Set<string>());
-
   // 取得中の数を数える。終わったら（画面が閉じたあとも含め）必ず戻す
   const track = useCallback(<T>(task: Promise<T>): Promise<T> => {
     setBusy((n) => n + 1);
     return task.finally(() => setBusy((n) => n - 1));
   }, []);
-
   // 自分宛て：開いたときと ⌘R のときだけ取る（自分の情報が取れてから）
   useEffect(() => {
     if (!fetchers) return;
@@ -238,13 +251,12 @@ export function useTriage(params: {
       if (result.kind === "ok") {
         setHits(result.value.hits);
         setCappedBefore(result.value.cappedBefore);
-      } else notify(result, "自分宛て");
+      } else notify(result, t("自分宛て"));
     });
     return () => {
       alive = false;
     };
   }, [nonce, track, fetchers]);
-
   // 既読位置：お気に入り、自分宛ての会話（新しい順）の順に、1回20会話まで取り直す
   const wantedKey = useMemo(
     () => wantedConversations(favoriteList, hits).join(","),
@@ -260,7 +272,7 @@ export function useTriage(params: {
       if (!alive) return;
       // 取れなかった会話の古い値は、このまま持つ（既読位置は進むだけで、古い値は未読と見誤る側にしか外れない）
       setLastReads((current) => new Map([...current, ...round.lastReads]));
-      if (round.stop) notify(round.stop, "既読位置");
+      if (round.stop) notify(round.stop, t("既読位置"));
       // ⌘R のあと、最初に終わった取り直しで、出した行の記録を空にし直す
       if (resetPending.current) {
         resetPending.current = false;
@@ -271,7 +283,6 @@ export function useTriage(params: {
       alive = false;
     };
   }, [wantedKey, nonce, track, fetchers]);
-
   // お気に入りの未読：お気に入りが変わったときと ⌘R のときも取る
   useEffect(() => {
     if (!fetchers) return;
@@ -282,20 +293,18 @@ export function useTriage(params: {
     void track(fetchers.fetchFavorites(ids, force)).then((result) => {
       if (!alive) return;
       if (result.kind === "ok") setChunks(result.value);
-      else notify(result, "お気に入りの未読");
+      else notify(result, t("お気に入りの未読"));
     });
     return () => {
       alive = false;
     };
   }, [favoriteKey, nonce, track, fetchers]);
-
   // 未読タグを数える既読位置。会話の行を開いた分を反映する（開いた会話は、取り直すまで、開いた時刻までを既読として数える）。
   // 空欄の一覧の自分宛ての行の判定（judge）は、開いた会話を反映せず、Slack の既読位置をそのまま使う
   const tagLastReads = useMemo(
     () => lastReadsForTags(lastReads, opened),
     [lastReads, opened],
   );
-
   // お気に入りの会話ごとの未読。件数不明の会話は、先頭から3件まで個別に確かめて反映する
   const summary = useMemo(
     () =>
@@ -321,7 +330,7 @@ export function useTriage(params: {
         if (!alive) return;
         // 途中まで確かめた分も、保存してあるものを読み直して反映する
         setChecks(store.loadUnknownChecks());
-        if (result.kind !== "ok") notify(result, "お気に入りの未読");
+        if (result.kind !== "ok") notify(result, t("お気に入りの未読"));
       },
     );
     return () => {
@@ -334,13 +343,11 @@ export function useTriage(params: {
     () => applyChecks(summary, checks, tagLastReads),
     [summary, checks, tagLastReads],
   );
-
   // お気に入りのまとめ検索の結果がある会話。結果が来るまで（取得中・停止・失敗）の会話は、自分宛ての件数で出す
   const favoriteResultIds = useMemo(
     () => favoritesWithResult(chunks, favoriteSet),
     [chunks, favoriteSet],
   );
-
   // 会話の行の未読タグ。Slack の既読位置（と、開いた会話）だけで決まり、対応済みの印は効かせない。
   // 自分宛ての件数は、既読位置が、結果の揃っている期間の始まりより前なら下限（「3+」）になる
   const tags = useMemo(
@@ -359,7 +366,6 @@ export function useTriage(params: {
     [hits, tagLastReads, favoriteRows, favoriteResultIds, cappedBefore, selfId],
   );
   const unreadIds = useMemo(() => new Set(tags.keys()), [tags]);
-
   // 空欄の一覧の自分宛ての行。出した行は記録して、開いている間は消さない
   const judge = useCallback(
     (hit: Hit) =>
@@ -381,12 +387,10 @@ export function useTriage(params: {
     );
     // hits・judge は、resets が増えた回の描画の値を使う（既読位置の更新と同じ回に増やしている）
   }, [rows, resets]);
-
   const revalidate = useCallback(() => {
     resetPending.current = true;
     setNonce((n) => n + 1);
   }, []);
-
   // 開いた行は読むので印を付ける。会話の既読位置は進むので、次に取り直す（いまの判定は変えない）
   const markOpened = useCallback(
     (hit: Hit) => {
@@ -425,7 +429,6 @@ export function useTriage(params: {
     },
     [hits, store],
   );
-
   return {
     rows,
     tags,

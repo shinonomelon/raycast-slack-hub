@@ -48,6 +48,18 @@ test("本文とメンションをblocks/textに変換し、会話へ1回だけ�
   });
   assert.ok((calls[0].options?.timeoutMs ?? 0) <= SEND_TIMEOUT_MS);
   assert.equal(calls[0].options?.signal, undefined);
+  assert.equal(calls[0].options?.source, "post");
+  assert.equal(calls[0].options?.dedupe, false);
+  assert.ok((calls[0].options?.deadlineAt ?? 0) > 0);
+});
+
+test("送信前の待機予算超過では未送信として戻り、自動で再試行しない", async () => {
+  const { calls, api } = fake(async () => {
+    throw new SlackApiError("deferred", "送信待機中です", 60);
+  });
+  const result = await postMarkdown({ ...params, api });
+  assert.equal(result.kind, "failed");
+  assert.equal(calls.length, 1);
 });
 test("人への投稿はconversations.openの返したDMへ送る。返信は親thread_tsへ送る", async () => {
   const { api, calls } = fake(async (method) =>

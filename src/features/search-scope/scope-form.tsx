@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import { Action, ActionPanel, Form, useNavigation } from "@raycast/api";
 import { useState } from "react";
 import type { Conversation, Person } from "../../shared/types.ts";
@@ -7,13 +8,17 @@ import {
   validateScopeSelection,
   type SearchScope,
 } from "./model.ts";
-
 export type ScopeFormProps = {
   scope: SearchScope;
   library: ChannelLibrary;
   conversations: readonly Conversation[];
   people: readonly Person[];
-  onApply: (scope: SearchScope, options: { showMessages?: boolean }) => void;
+  onApply: (
+    scope: SearchScope,
+    options: {
+      showMessages?: boolean;
+    },
+  ) => void;
   onManage?: (
     library: ChannelLibrary,
     onChange: (library: ChannelLibrary) => void,
@@ -70,13 +75,13 @@ export function ScopeForm({
   };
   return (
     <Form
-      navigationTitle="検索条件を選ぶ"
+      navigationTitle={t("検索条件を選ぶ")}
       actions={
         <ActionPanel>
-          <Action title="適用" onAction={() => apply()} />
-          <Action title="メッセージを表示" onAction={() => apply(true)} />
+          <Action title={t("適用")} onAction={() => apply()} />
+          <Action title={t("メッセージを表示")} onAction={() => apply(true)} />
           <Action
-            title="条件をクリアして適用"
+            title={t("条件をクリアして適用")}
             onAction={() => {
               onApply(DEFAULT_SEARCH_SCOPE, {});
               pop();
@@ -84,7 +89,7 @@ export function ScopeForm({
           />
           {onManage && (
             <Action
-              title="セクションを管理"
+              title={t("セクションを管理")}
               onAction={() =>
                 onManage(library, (next) => {
                   setLibrary(next);
@@ -98,22 +103,25 @@ export function ScopeForm({
     >
       <Form.Dropdown
         id="range"
-        title="検索範囲"
+        title={t("検索範囲")}
         value={kind}
         onChange={(value) => {
           setKind(value as typeof kind);
           setError(undefined);
         }}
       >
-        <Form.Dropdown.Item value="all" title="すべて" />
-        <Form.Dropdown.Item value="favorites" title="お気に入りチャンネル" />
-        <Form.Dropdown.Item value="section" title="セクション" />
-        <Form.Dropdown.Item value="channel" title="チャンネル" />
+        <Form.Dropdown.Item value="all" title={t("すべて")} />
+        <Form.Dropdown.Item
+          value="favorites"
+          title={t("お気に入りチャンネル")}
+        />
+        <Form.Dropdown.Item value="section" title={t("セクション")} />
+        <Form.Dropdown.Item value="channel" title={t("チャンネル")} />
       </Form.Dropdown>
       {kind === "section" && (
         <Form.Dropdown
           id="section"
-          title="セクション"
+          title={t("セクション")}
           value={sectionId}
           onChange={setSectionId}
           error={error}
@@ -123,8 +131,8 @@ export function ScopeForm({
               value={sectionId}
               title={
                 sectionId
-                  ? "選択したセクションは削除されています"
-                  : "セクションを選んでください"
+                  ? t("選択したセクションは削除されています")
+                  : t("セクションを選んでください")
               }
             />
           )}
@@ -138,7 +146,7 @@ export function ScopeForm({
       {kind === "channel" && (
         <Form.Dropdown
           id="channel"
-          title="チャンネル"
+          title={t("チャンネル")}
           value={channelId}
           onChange={setChannelId}
           error={error}
@@ -150,14 +158,14 @@ export function ScopeForm({
       )}
       <Form.Dropdown
         id="sender"
-        title="投稿者"
+        title={t("投稿者")}
         value={senderId}
         onChange={(id) => {
           setSenderId(id);
           setError(undefined);
         }}
       >
-        <Form.Dropdown.Item value="" title="指定なし" />
+        <Form.Dropdown.Item value="" title={t("指定なし")} />
         {people.map((p) => (
           <Form.Dropdown.Item
             key={p.id}
@@ -169,7 +177,9 @@ export function ScopeForm({
       <Form.Description
         text={
           error ??
-          "範囲内の投稿と投稿者の両方に一致するメッセージを探します。適用するまで検索は始まりません。"
+          t(
+            "範囲内の投稿と投稿者の両方に一致するメッセージを探します。適用するまで検索は始まりません。",
+          )
         }
       />
     </Form>

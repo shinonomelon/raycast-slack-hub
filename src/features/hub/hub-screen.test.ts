@@ -1,3 +1,4 @@
+import * as i18n from "../../shared/i18n.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -42,6 +43,7 @@ const moduleExports = {} as {
   ) => Section;
 };
 runInNewContext(compiled, {
+  ...i18n,
   exports: moduleExports,
   require: (name: string) => {
     assert.equal(name, "react/jsx-runtime");
@@ -109,6 +111,7 @@ function orderHarness() {
   assert.ok(onApply);
   type Request = { text: string; section: string };
   const context = {
+    ...i18n,
     searchText: "",
     messageMode: false,
     override: undefined as unknown,
@@ -226,8 +229,12 @@ function channelEntryHarness(
         title &&
         ts.isJsxAttribute(title) &&
         title.initializer &&
-        ts.isStringLiteral(title.initializer) &&
-        title.initializer.text === "このチャンネルでメッセージを検索"
+        ts.isJsxExpression(title.initializer) &&
+        title.initializer.expression &&
+        ts.isCallExpression(title.initializer.expression) &&
+        ts.isStringLiteral(title.initializer.expression.arguments[0]) &&
+        title.initializer.expression.arguments[0].text ===
+          "このチャンネルでメッセージを検索"
       ) {
         const action = node.attributes.properties.find(
           (attribute) =>

@@ -1,3 +1,4 @@
+import { t, getLocale } from "../../shared/i18n.ts";
 import type { Conversation, Person } from "../../shared/types.ts";
 import type { ChannelLibrary } from "../channel-library/model.ts";
 import {
@@ -59,7 +60,6 @@ import { useReplyPriority } from "./use-reply-priority.ts";
 import type { ComponentProps } from "react";
 import { guardedReplyRecheck } from "./reply-priority-guard.ts";
 import { reusableReplyAI } from "./reply-priority-cache.ts";
-
 // 押し出したフォームも設定変更時に外し、入力本文と前回原文を画面から消す。
 function GuardedReplyForm({
   initialToken,
@@ -88,16 +88,27 @@ function GuardedReplyForm({
   return valid ? (
     <ComposeForm {...props} />
   ) : (
-    <Detail markdown="認証設定が変わりました。Slack Hubを開き直してください。" />
+    <Detail
+      markdown={t("認証設定が変わりました。Slack Hubを開き直してください。")}
+    />
   );
 }
-
 const titles: Record<ReplySection, string> = {
-  review: "要確認",
-  needed: "優先候補",
-  "possibly-unnecessary": "返信不要の可能性",
-  pending: "未返信候補",
-  hidden: "除外・あとで対応",
+  get review() {
+    return t("要確認");
+  },
+  get needed() {
+    return t("優先候補");
+  },
+  get "possibly-unnecessary"() {
+    return t("返信不要の可能性");
+  },
+  get pending() {
+    return t("未返信候補");
+  },
+  get hidden() {
+    return t("除外・あとで対応");
+  },
 };
 type CachedAI = {
   hash: string;
@@ -148,12 +159,12 @@ export function ReplyPriorityScreen({
   const range = scope.range;
   const scopeTitle =
     range.kind === "all"
-      ? "すべて"
+      ? t("すべて")
       : range.kind === "favorites"
-        ? "お気に入りチャンネル"
+        ? t("お気に入りチャンネル")
         : range.kind === "section"
           ? (library?.sections.find((s) => s.id === range.sectionId)?.name ??
-            "削除されたセクション")
+            t("削除されたセクション"))
           : (scopeControls?.conversations.find((c) => c.id === range.channelId)
               ?.name ?? range.channelId);
   const [days, setDays] = useState<1 | 7>(1);
@@ -175,7 +186,13 @@ export function ReplyPriorityScreen({
   const aiBusy = useRef(false);
   const aiQueue = useRef<string[]>([]);
   const aiPausedUntil = useRef(0);
-  const [aiMessage, setAIMessage] = useState("");
+  const [aiNotice, setAINotice] = useState({
+    text: "",
+    kind: "info" as "info" | "problem",
+  });
+  const aiMessage = aiNotice.text;
+  const setAIMessage = (text: string, kind: "info" | "problem" = "info") =>
+    setAINotice({ text, kind });
   function stopAI(clear = false, persist = true) {
     aiGeneration.current++;
     aiAbort.current?.abort();
@@ -287,7 +304,10 @@ export function ReplyPriorityScreen({
     if (aiBusy.current || source.loading || !source.guard()) return;
     if (aiPausedUntil.current > Date.now()) {
       setAIMessage(
-        `${new Date(aiPausedUntil.current).toLocaleTimeString("ja-JP")}までAI判定を停止します`,
+        t(
+          "{0}までAI判定を停止します",
+          new Date(aiPausedUntil.current).toLocaleTimeString(getLocale()),
+        ),
       );
       return;
     }
@@ -296,21 +316,23 @@ export function ReplyPriorityScreen({
     const key = readReplyAISettings().typesafeApiKey.trim();
     if (!key) {
       setAIMessage(
-        "TypeSafe API Keyを設定してください。AIなしでも候補を確認できます",
+        t("TypeSafe API Keyを設定してください。AIなしでも候補を確認できます"),
+        "problem",
       );
       await openExtensionPreferences();
       return;
     }
     if (!consent.current) {
       const accepted = await confirmAlert({
-        title: "TypeSafeへ会話本文を送信しますか？",
-        message:
+        title: t("TypeSafeへ会話本文を送信しますか？"),
+        message: t(
           "選択した投稿者以外の発言も会話の文脈として送ります。表示候補の本文・投稿時刻・相対化した投稿者情報をTypeSafeへ送信します。本文に含まれる個人情報は自動では除去しません。1回最大20候補です。Slackトークンは送りません。無効化で今後の送信は止まりますが、送信済み本文は取り消せません。",
+        ),
         primaryAction: {
-          title: "有効にして判定",
+          title: t("有効にして判定"),
           style: Alert.ActionStyle.Default,
         },
-        dismissAction: { title: "AIなしで確認" },
+        dismissAction: { title: t("AIなしで確認") },
       });
       if (
         !accepted ||
@@ -405,18 +427,27 @@ export function ReplyPriorityScreen({
       setStaged(ready);
       setAIMessage(
         round.stopped === "auth"
-          ? "TypeSafeの認証に失敗しました。設定のAPI Keyを確認・更新してからSlack Hubを開き直してください"
+          ? t(
+              "TypeSafeの認証に失敗しました。設定のAPI Keyを確認・更新してからSlack Hubを開き直してください",
+            )
           : round.stopped === "rate"
-            ? "AIの回数制限に当たりました。候補は残っています"
+            ? t("AIの回数制限に当たりました。候補は残っています")
             : round.remaining.length
-              ? `未判定 ${round.remaining.length}件。次の判定で続きます`
+              ? t("未判定 {0}件。次の判定で続きます", round.remaining.length)
               : errors.size
-                ? "AI判定できませんでした。再試行できます"
-                : "AI判定を反映すると順序を更新します",
+                ? t("AI判定できませんでした。再試行できます")
+                : t("AI判定を反映すると順序を更新します"),
+        round.stopped === "auth" ||
+          (!round.stopped && !round.remaining.length && errors.size > 0)
+          ? "problem"
+          : "info",
       );
     } catch {
       if (id === aiGeneration.current)
-        setAIMessage("AI判定できませんでした。候補は残っています");
+        setAIMessage(
+          t("AI判定できませんでした。候補は残っています"),
+          "problem",
+        );
     } finally {
       if (id === aiGeneration.current) {
         aiBusy.current = false;
@@ -435,7 +466,7 @@ export function ReplyPriorityScreen({
       source.store.loadPause() > Date.now()
     ) {
       await showToast({
-        title: "Slackの回数制限で停止中です",
+        title: t("Slackの回数制限で停止中です"),
         style: Toast.Style.Failure,
       });
       return;
@@ -459,7 +490,13 @@ export function ReplyPriorityScreen({
                 ts: replyRoot(latest),
                 limit: 15,
               },
-          { timeoutMs: 15000, signal },
+          {
+            timeoutMs: 15000,
+            signal,
+            deadlineAt: Date.now() + 15000,
+            source: "reply-check",
+            dedupe: false,
+          },
         ),
     );
     if (!rechecked) return;
@@ -478,22 +515,32 @@ export function ReplyPriorityScreen({
         )
       ) {
         await showToast({
-          title: "自分の後続投稿が見つかりました",
-          message: "一覧を更新してから確認してください",
+          title: t("自分の後続投稿が見つかりました"),
+          message: t("一覧を更新してから確認してください"),
           style: Toast.Style.Success,
         });
         return;
       }
       previous = Boolean(
         data.has_more ||
-        (data.response_metadata as { next_cursor?: string } | undefined)
-          ?.next_cursor ||
+        (
+          data.response_metadata as
+            | {
+                next_cursor?: string;
+              }
+            | undefined
+        )?.next_cursor ||
         !messages.length,
       );
     } catch (error) {
       previous = true;
-      if (error instanceof SlackApiError && error.kind === "rate_limited")
-        source.store.savePause(Date.now() + (error.retryAfter ?? 60) * 1000);
+      if (
+        error instanceof SlackApiError &&
+        (error.kind === "rate_limited" || error.kind === "deferred")
+      )
+        source.store.savePause(
+          error.retryAt ?? Date.now() + (error.retryAfter ?? 60) * 1000,
+        );
     }
     if (!source.guard()) return;
     push(
@@ -507,7 +554,7 @@ export function ReplyPriorityScreen({
         reply={{
           threadTs: replyRoot(latest)!,
           parentTitle: replyParentTitle(latest.hit),
-          parent: `${previous ? "前回の確認。最新状態を確認できませんでした。\n" : "フォームを開く直前に確認しました。\n"}${replyParentText({ sender: context.names.sender(latest.hit), time: new Date(Number(latest.anchorTs) * 1000).toLocaleString("ja-JP"), body: toPlain(latest.messages.find((m) => m.ts === latest.anchorTs)?.text ?? latest.hit.text, context.names.lookup) })}`,
+          parent: `${previous ? t("前回の確認。最新状態を確認できませんでした。\n") : t("フォームを開く直前に確認しました。\n")}${replyParentText({ sender: context.names.sender(latest.hit), time: new Date(Number(latest.anchorTs) * 1000).toLocaleString(getLocale()), body: toPlain(latest.messages.find((m) => m.ts === latest.anchorTs)?.text ?? latest.hit.text, context.names.lookup) })}`,
         }}
         onReplied={() => {
           void sourceRef.current.refresh();
@@ -546,7 +593,7 @@ export function ReplyPriorityScreen({
     <>
       {scopeControls && library && (
         <Action
-          title="検索条件を選ぶ"
+          title={t("検索条件を選ぶ")}
           icon={Icon.Filter}
           onAction={() =>
             push(
@@ -596,18 +643,29 @@ export function ReplyPriorityScreen({
         />
       )}
       <Action
-        title="取得状況"
+        title={t("取得状況")}
         icon={Icon.Info}
         onAction={() =>
           push(
             <Detail
-              markdown={`取得済み ${source.snapshot.candidates.length}件。省略 ${source.snapshot.omittedCount ?? 0}件。未処理 ${source.snapshot.pendingCount}件。${source.snapshot.searchCapped ? "表示・ページ上限あり。範囲を狭めてください。" : ""}${source.snapshot.searchIncomplete ? "一部取得できませんでした。" : ""}\n\n検索は1回4呼び出し、100件×2ページ、候補400件を上限にします。Slackの検索ページは新着・編集で境界が動き、欠落ゼロを保証しません。`}
+              markdown={t(
+                "取得済み {0}件。省略 {1}件。未処理 {2}件。{3}{4}\n\n検索は1回4呼び出し、100件\u00D72ページ、候補400件を上限にします。Slackの検索ページは新着・編集で境界が動き、欠落ゼロを保証しません。",
+                source.snapshot.candidates.length,
+                source.snapshot.omittedCount ?? 0,
+                source.snapshot.pendingCount,
+                source.snapshot.searchCapped
+                  ? t("表示・ページ上限あり。範囲を狭めてください。")
+                  : "",
+                source.snapshot.searchIncomplete
+                  ? t("一部取得できませんでした。")
+                  : "",
+              )}
             />,
           )
         }
       />
       <Action
-        title="Reload Reply Candidates"
+        title={t("Reload Reply Candidates")}
         icon={Icon.ArrowClockwise}
         shortcut={Keyboard.Shortcut.Common.Refresh}
         onAction={() => {
@@ -622,7 +680,7 @@ export function ReplyPriorityScreen({
       />
       {source.snapshot.pendingCount > 0 && (
         <Action
-          title="続きを確認"
+          title={t("続きを確認")}
           icon={Icon.ArrowRight}
           onAction={() => {
             const pausedUntil = Math.max(
@@ -632,8 +690,11 @@ export function ReplyPriorityScreen({
             if (pausedUntil > Date.now()) {
               void showToast({
                 style: Toast.Style.Failure,
-                title: "Slackの回数制限で停止中です",
-                message: `${new Date(pausedUntil).toLocaleTimeString("ja-JP")}以降に「続きを確認」を実行してください`,
+                title: t("Slackの回数制限で停止中です"),
+                message: t(
+                  "{0}以降に「続きを確認」を実行してください",
+                  new Date(pausedUntil).toLocaleTimeString(getLocale()),
+                ),
               });
               return;
             }
@@ -642,7 +703,7 @@ export function ReplyPriorityScreen({
         />
       )}
       <Action
-        title="過去24時間"
+        title={t("過去24時間")}
         icon={Icon.Clock}
         onAction={() => {
           if (days !== 1) {
@@ -653,7 +714,7 @@ export function ReplyPriorityScreen({
         }}
       />
       <Action
-        title="過去7日"
+        title={t("過去7日")}
         icon={Icon.Calendar}
         onAction={() => {
           if (days !== 7) {
@@ -664,18 +725,18 @@ export function ReplyPriorityScreen({
         }}
       />
       <Action
-        title={aiLoading ? "AI判定を中断" : "AIで並べる・再試行"}
+        title={aiLoading ? t("AI判定を中断") : t("AIで並べる・再試行")}
         icon={Icon.Stars}
         onAction={() => {
           if (aiLoading) {
             stopAI();
-            setAIMessage("AI判定を中断しました。再試行できます");
+            setAIMessage(t("AI判定を中断しました。再試行できます"), "problem");
           } else void score();
         }}
       />
       {staged.size > 0 && !aiLoading && (
         <Action
-          title="AI判定を反映"
+          title={t("AI判定を反映")}
           icon={Icon.CheckCircle}
           onAction={() => {
             if (source.guard()) {
@@ -698,7 +759,8 @@ export function ReplyPriorityScreen({
               );
               if (!accepted.size) {
                 setAIMessage(
-                  "判定が古くなりました。更新してから再判定してください",
+                  t("判定が古くなりました。更新してから再判定してください"),
+                  "problem",
                 );
                 setStaged(new Map());
                 return;
@@ -719,68 +781,87 @@ export function ReplyPriorityScreen({
       )}
       {(aiEnabled || aiApplied) && (
         <Action
-          title="AIを無効にする"
+          title={t("AIを無効にする")}
           icon={Icon.XMarkCircle}
           onAction={() => stopAI(true)}
         />
       )}
       <Action
-        title="Open Extension Preferences"
+        title={t("Open Extension Preferences")}
         icon={Icon.Gear}
         onAction={openExtensionPreferences}
       />
     </>
   );
   const description = source.invalidated
-    ? "認証設定が変わりました。Slack Hubを開き直してください"
+    ? t("認証設定が変わりました。Slack Hubを開き直してください")
     : !context.session.canFetch
-      ? "認証が確定していないため取得できません。Slack Hubを開き直してください"
+      ? t(
+          "認証が確定していないため取得できません。Slack Hubを開き直してください",
+        )
       : aiMessage;
   const slackPausedUntil = Math.max(
     source.snapshot.pausedUntil,
     source.store.loadPause(),
   );
   const scopeProblem = scopeBlocked
-    ? "検索条件を選び直してください"
+    ? t("検索条件を選び直してください")
     : resolution.unresolvedChannelIds.length
-      ? `${resolution.unresolvedChannelIds.length}件の参照できないチャンネルを除外しました。ディレクトリを更新してください`
+      ? t(
+          "{0}件の参照できないチャンネルを除外しました。ディレクトリを更新してください",
+          resolution.unresolvedChannelIds.length,
+        )
       : "";
   const problem =
     scopeProblem ||
     (source.invalidated || !context.session.canFetch
       ? description
       : slackPausedUntil > Date.now()
-        ? `Slackの回数制限。${new Date(slackPausedUntil).toLocaleTimeString("ja-JP")}以降に「続きを確認」`
+        ? t(
+            "Slackの回数制限。{0}以降に「続きを確認」",
+            new Date(slackPausedUntil).toLocaleTimeString(getLocale()),
+          )
         : aiPausedUntil.current > Date.now()
-          ? `AIの回数制限。${new Date(aiPausedUntil.current).toLocaleTimeString("ja-JP")}以降に「AIで並べる・再試行」`
-          : /できません|失敗|中断|古くなりました|設定してください/.test(
-                aiMessage,
-              )
+          ? t(
+              "AIの回数制限。{0}以降に「AIで並べる・再試行」",
+              new Date(aiPausedUntil.current).toLocaleTimeString(getLocale()),
+            )
+          : aiNotice.kind === "problem"
             ? aiMessage
             : "");
   return (
     <List
-      navigationTitle={`返信待ち / ${scopeTitle}${scope.senderId ? ` / ${context.people.find((p) => p.id === scope.senderId)?.displayName ?? scope.senderId}` : ""}`}
+      navigationTitle={t(
+        "返信待ち / {0}{1}",
+        scopeTitle,
+        scope.senderId
+          ? ` / ${context.people.find((p) => p.id === scope.senderId)?.displayName ?? scope.senderId}`
+          : "",
+      )}
       isLoading={source.loading || aiLoading}
       isShowingDetail={showDetail}
       selectedItemId={selected}
       onSelectionChange={(id) => setSelected(id ?? undefined)}
-      searchBarPlaceholder="返信待ちを検索"
+      searchBarPlaceholder={t("返信待ちを検索")}
       filtering={false}
       searchText={searchText}
       onSearchTextChange={setSearchText}
       searchBarAccessory={
         <List.Dropdown
-          tooltip="返信待ちの表示"
+          tooltip={t("返信待ちの表示")}
           value={filter}
           onChange={setFilter}
         >
-          <List.Dropdown.Item value="all" title="すべての候補" />
+          <List.Dropdown.Item value="all" title={t("すべての候補")} />
           {sections.map((section) => (
             <List.Dropdown.Item
               key={section}
               value={section}
-              title={`${titles[section]} ${rows.filter((r) => r.section === section).length}件`}
+              title={t(
+                "{0} {1}件",
+                titles[section],
+                rows.filter((r) => r.section === section).length,
+              )}
             />
           ))}
         </List.Dropdown>
@@ -795,13 +876,16 @@ export function ReplyPriorityScreen({
         />
       )}
       <List.EmptyView
-        title="返信待ち候補はありません"
+        title={t("返信待ち候補はありません")}
         description={
           scopeControls?.scopeWarning ||
           (scopeBlocked
-            ? "検索条件を選び直してください"
+            ? t("検索条件を選び直してください")
             : resolution.unresolvedChannelIds.length
-              ? `${resolution.unresolvedChannelIds.length}件の参照できないチャンネルを除外しました。ディレクトリを更新してください`
+              ? t(
+                  "{0}件の参照できないチャンネルを除外しました。ディレクトリを更新してください",
+                  resolution.unresolvedChannelIds.length,
+                )
               : problem || description)
         }
         actions={<ActionPanel>{common}</ActionPanel>}

@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import { Action, ActionPanel, Icon, List, useNavigation } from "@raycast/api";
 import { useState } from "react";
 import type { MembershipContext } from "./membership-context.ts";
@@ -23,8 +24,8 @@ export function PersonPicker({
           {
             id: self.userId,
             handle: self.user,
-            displayName: "自分",
-            realName: "自分",
+            displayName: t("自分"),
+            realName: t("自分"),
             title: "",
             isBot: false,
           },
@@ -38,23 +39,23 @@ export function PersonPicker({
   const rows = allMatches(memberRows(candidates, people, context.prefs), text);
   return (
     <List
-      navigationTitle={remove ? "Remove Person" : "Add Person"}
-      searchBarPlaceholder="名前で検索"
+      navigationTitle={remove ? t("Remove Person") : t("Add Person")}
+      searchBarPlaceholder={t("名前で検索")}
       searchText={text}
       onSearchTextChange={setText}
       filtering={false}
     >
-      <List.EmptyView title="該当する人がいません" />
+      <List.EmptyView title={t("該当する人がいません")} />
       {rows.map((row) => (
         <List.Item
           key={row.id}
           title={row.title}
-          subtitle={row.id === self?.userId ? "自分" : row.subtitle}
+          subtitle={row.id === self?.userId ? t("自分") : row.subtitle}
           icon={Icon.Person}
           actions={
             <ActionPanel>
               <Action
-                title={remove ? "Remove Person" : "Add Person"}
+                title={remove ? t("Remove Person") : t("Add Person")}
                 onAction={() => {
                   onSelect(row.id);
                   pop();

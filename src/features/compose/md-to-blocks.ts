@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 // Markdown を Slack の blocks と通知用 text に変換する。
 // slack-messaging スキルの送信スクリプト md-to-blocks.pyの移植。
 // 構成は元と同じ（見出し・段落は section の mrkdwn、箇条書きは rich_text_list、ネストは indent）。
@@ -7,25 +8,21 @@
 //   - section の mrkdwn では & < > をエスケープする（メンションと作ったリンクは除く）
 //   - 装飾が文字に密着している段落は rich_text にする（mrkdwn の *太字* は日本語に密着すると効かない）
 //   - 取り消し線・斜体・引用・メンション・バックスラッシュエスケープ（エディタの Markdown 出力が付ける）
-
 import { MessageLimitError, SECTION_TEXT_LIMIT } from "./message-limits.ts";
-
 export type Block = Record<string, unknown>;
 type RichElement = Record<string, unknown>;
-
 const HEADING = /^(#{1,6})\s+(.*)$/;
 const BULLET = /^([ \t\u3000]*)([-*+•])\s+(.*)$/;
 const ORDERED = /^([ \t\u3000]*)(\d+)[.)]\s+(.*)$/;
 const QUOTE = /^\s*>\s?(.*)$/;
 const FENCE = /^\s*```/;
-
 // 行頭の空白から段数を求める。半角2つ・タブ・全角スペース1つで1段（元と同じ）
 function indentLevel(prefix: string): number {
   let units = 0;
   let i = 0;
   while (i < prefix.length) {
     const ch = prefix[i];
-    if (ch === "\t" || ch === "\u3000") {
+    if (ch === "\t" || ch === "　") {
       units += 1;
       i += 1;
     } else if (ch === " ") {
@@ -41,17 +38,33 @@ function indentLevel(prefix: string): number {
   }
   return Math.min(units, 7);
 }
-
 // ---- インラインの解析 --------------------------------------------------------
-
 type Token =
-  | { kind: "text"; text: string }
-  | { kind: "bold" | "italic" | "strike" | "code"; text: string }
-  | { kind: "link"; text: string; url: string }
-  | { kind: "emoji"; name: string }
-  | { kind: "mention"; userId: string }
-  | { kind: "special"; raw: string };
-
+  | {
+      kind: "text";
+      text: string;
+    }
+  | {
+      kind: "bold" | "italic" | "strike" | "code";
+      text: string;
+    }
+  | {
+      kind: "link";
+      text: string;
+      url: string;
+    }
+  | {
+      kind: "emoji";
+      name: string;
+    }
+  | {
+      kind: "mention";
+      userId: string;
+    }
+  | {
+      kind: "special";
+      raw: string;
+    };
 // 先に書いたものほど優先する。コードを最初に取り、中を他の規則に触らせない
 const INLINE = new RegExp(
   [
@@ -69,10 +82,8 @@ const INLINE = new RegExp(
   ].join("|"),
   "g",
 );
-
 // 装飾の中のバックスラッシュエスケープを外す
 const unescapeMd = (s: string) => s.replace(/\\([!-/:-@[-`{-~])/g, "$1");
-
 function tokenize(text: string): Token[] {
   const tokens: Token[] = [];
   let pos = 0;
@@ -105,14 +116,12 @@ function tokenize(text: string): Token[] {
   pushText(text.slice(pos));
   return tokens;
 }
-
 export function escapeSlack(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
-
 // section 用の mrkdwn（元の to_mrkdwn に相当。**b**→*b*、[t](u)→<u|t>）
 function toMrkdwn(text: string): string {
   return tokenize(text)
@@ -140,7 +149,6 @@ function toMrkdwn(text: string): string {
     })
     .join("");
 }
-
 // rich_text 用の要素（元の to_rich_elements に相当）
 function toRichElements(text: string): RichElement[] {
   const elements: RichElement[] = tokenize(text).map((t) => {
@@ -167,7 +175,6 @@ function toRichElements(text: string): RichElement[] {
   });
   return elements.length > 0 ? elements : [{ type: "text", text: "" }];
 }
-
 // 通知用 text の1行（元の _plain に相当。装飾記号を落とし、リンクは表示名だけ残す）
 function toPlain(text: string): string {
   return tokenize(text)
@@ -193,7 +200,6 @@ function toPlain(text: string): string {
     })
     .join("");
 }
-
 // 装飾の外側が空白以外の文字に密着しているか。密着していると mrkdwn では効かない
 function hasGluedStyle(text: string): boolean {
   for (const m of text.matchAll(INLINE)) {
@@ -212,12 +218,10 @@ function hasGluedStyle(text: string): boolean {
   }
   return false;
 }
-
 const section = (text: string): Block => ({
   type: "section",
   text: { type: "mrkdwn", text },
 });
-
 // 文字参照とUnicodeの書記素は途中で切らず、装飾は分割片ごとに閉じる。
 // リンク・メンション・emojiは不可分として扱い、収まらないものは送信前に拒否する。
 function toSections(text: string, heading = false): Block[] {
@@ -225,7 +229,6 @@ function toSections(text: string, heading = false): Block[] {
   const rendered = toMrkdwn(text);
   const limit = SECTION_TEXT_LIMIT - wrapper.length * 2;
   if (rendered.length <= limit) return [section(wrapper + rendered + wrapper)];
-
   const sections: Block[] = [];
   let current = "";
   const flush = () => {
@@ -235,7 +238,9 @@ function toSections(text: string, heading = false): Block[] {
   };
   const tooLong = () => {
     throw new MessageLimitError(
-      "リンク・メンション・文字がSlackのsectionの3000文字上限に収まりません。短くして投稿してください。投稿は送信していません",
+      t(
+        "リンク・メンション・文字がSlackのsectionの3000文字上限に収まりません。短くして投稿してください。投稿は送信していません",
+      ),
     );
   };
   const appendAtomic = (value: string) => {
@@ -308,9 +313,7 @@ function toSections(text: string, heading = false): Block[] {
   flush();
   return sections;
 }
-
 // ---- blocks への変換 --------------------------------------------------------
-
 export function toBlocks(md: string): Block[] {
   const blocks: Block[] = [];
   const para: string[] = [];
@@ -320,7 +323,6 @@ export function toBlocks(md: string): Block[] {
     indent: number;
     elements: RichElement[];
   }[] = [];
-
   const flushPara = () => {
     if (para.length === 0) return;
     const text = para.join("\n");
@@ -336,7 +338,6 @@ export function toBlocks(md: string): Block[] {
     }
     para.length = 0;
   };
-
   const flushQuote = () => {
     if (quote.length === 0) return;
     blocks.push({
@@ -347,13 +348,17 @@ export function toBlocks(md: string): Block[] {
     });
     quote.length = 0;
   };
-
   // 同じ style・indent が続く項目を1つのリストにまとめ、変わったら次のリストを続ける（元と同じ）
   const flushList = () => {
     if (listItems.length === 0) return;
     const rtElements: Block[] = [];
     let run: Block[] = [];
-    let curKey: { style: string; indent: number } | undefined;
+    let curKey:
+      | {
+          style: string;
+          indent: number;
+        }
+      | undefined;
     const pushRun = () => {
       if (curKey && run.length > 0) {
         rtElements.push({
@@ -380,17 +385,14 @@ export function toBlocks(md: string): Block[] {
     blocks.push({ type: "rich_text", elements: rtElements });
     listItems.length = 0;
   };
-
   const flushAll = () => {
     flushPara();
     flushQuote();
     flushList();
   };
-
   const lines = md.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-
     if (FENCE.test(line)) {
       flushAll();
       const code: string[] = [];
@@ -410,12 +412,10 @@ export function toBlocks(md: string): Block[] {
       });
       continue;
     }
-
     if (line.trim() === "") {
       flushAll();
       continue;
     }
-
     const mb = line.match(BULLET);
     const mo = line.match(ORDERED);
     if (mb || mo) {
@@ -429,9 +429,7 @@ export function toBlocks(md: string): Block[] {
       });
       continue;
     }
-
     flushList();
-
     const mq = line.match(QUOTE);
     if (mq) {
       flushPara();
@@ -439,14 +437,12 @@ export function toBlocks(md: string): Block[] {
       continue;
     }
     flushQuote();
-
     const mh = line.match(HEADING);
     if (mh) {
       flushPara();
       blocks.push(...toSections(mh[2].trim(), true));
       continue;
     }
-
     const stripped = line.trim();
     // テンプレの節見出し（■ で始まる行）は太字の section 単独ブロックにする（元と同じ）。
     // mrkdwn のテンプレを写した *■ …* の行も節見出しとみなす（元は段落のまま素通しして太字で出る。
@@ -461,15 +457,12 @@ export function toBlocks(md: string): Block[] {
       blocks.push(...toSections(inner, true));
       continue;
     }
-
     para.push(line);
   }
   flushAll();
   return blocks;
 }
-
 // ---- 通知用 text ------------------------------------------------------------
-
 export function toText(md: string): string {
   const out: string[] = [];
   const lines = md.split(/\r?\n/);

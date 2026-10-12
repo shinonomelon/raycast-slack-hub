@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import { createReplySearchPlan } from "../search-scope/search-plan.ts";
 import { scopeFingerprint, type ResolvedScope } from "../search-scope/model.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -13,7 +14,6 @@ import {
   type ReplyScanPorts,
 } from "./reply-priority-fetch.ts";
 import type { ReplyCachePort } from "./reply-priority-store.ts";
-
 export const REPLY_RESULT_TTL = 5 * 60 * 1000;
 export const REPLY_DECISION_NAMESPACE = "reply-priority-decisions";
 export type ReplyBinding = {
@@ -71,9 +71,11 @@ const message = (m: unknown) =>
         (r) =>
           obj(r) && text(r.name) && Array.isArray(r.users) && r.users.every(id),
       )));
-
 export function replyBinding(
-  identity: { teamId: string; userId: string },
+  identity: {
+    teamId: string;
+    userId: string;
+  },
   token: string,
   aiKey: string,
 ): ReplyBinding {
@@ -237,7 +239,6 @@ export function validReplyCheckpoint(
     return false;
   return value.started || value.queue.length === 0;
 }
-
 export function createReplyDecisionCache(
   port: ReplyCachePort,
   binding: ReplyBinding,
@@ -287,7 +288,7 @@ export function createReplyDecisionCache(
               /:(scan|ai):[17]$/.test(slot),
           )
         )
-          throw new Error("キャッシュ索引が不正です");
+          throw new Error(t("キャッシュ索引が不正です"));
         if (!indexed.includes(k))
           port.set(slotIndex, JSON.stringify([...indexed, k]));
       }
